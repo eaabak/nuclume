@@ -2,6 +2,12 @@
 
 **From a Single Atom to an Entire City.** An interactive, conceptual science exhibition: explore uranium-235, initiate fission, discover a pressurized water reactor (PWR), and follow heat, mechanical motion and electricity to a lit city. The four chapters form one continuous journey.
 
+## AI-assisted development
+
+NUCLUME was conceived and directed by [eaabak](https://github.com/eaabak). AI coding tools were used to generate code, debug issues, and refine the implementation. The project author remains responsible for its scope, creative direction, release decisions, and published work. Validation procedures and scientific limitations are documented below.
+
+AI-generated reference images supplied by the project author guided the visual direction. The logo mark and favicon are implemented as SVG, and the interactive scenes use procedural geometry, textures and lighting developed through the same AI-assisted coding process. The reference images are not bundled with the application.
+
 ## Setup
 
 Use Node.js 22 or later and npm.
