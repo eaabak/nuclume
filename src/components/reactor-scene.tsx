@@ -1,5 +1,6 @@
 "use client";
 
+import { REACTOR_COLORS, SCENE_LIGHTS } from "@/lib/scene-colors";
 import { useFrame, useThree } from "@react-three/fiber";
 import {
   useEffect,
@@ -26,6 +27,7 @@ import {
   Object3D,
   OrthographicCamera,
   PointLight,
+  PMREMGenerator,
   Shape,
   ShapeGeometry,
   SphereGeometry,
@@ -34,17 +36,21 @@ import {
   Vector2,
   Vector3,
 } from "three";
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import {
   CONTROL_ROD_POSITIONS,
   FUEL_ROD_POSITIONS,
   REACTOR_PART_IDS,
   REACTOR_PARTS,
+  REACTOR_ANNOTATIONS,
 } from "@/lib/reactor";
-import type { ViewOrientation } from "./nucleus-canvas";
+import type { ViewOrientation } from "@/lib/scene";
 import type { ReactorController } from "./use-reactor";
 import type { PowerController } from "./use-power";
 import { COOLANT_TRANSFER } from "@/lib/power";
 import { journeyTime, type JourneyController } from "./use-journey";
+import { ReactorArchitecture } from "./reactor-architecture";
+import { useReactorNavigation } from "./use-reactor-navigation";
 
 const fuelPositions = FUEL_ROD_POSITIONS.filter(([x, z]) => x !== 0 || z !== 0);
 const FLOW_COUNT = 32;
@@ -83,29 +89,40 @@ export function ReactorScene({
   const grid = useRef<InstancedMesh>(null);
   const flanges = useRef<InstancedMesh>(null);
   const bolts = useRef<InstancedMesh>(null);
+  const collars = useRef<InstancedMesh>(null);
+  const drives = useRef<InstancedMesh>(null);
   const flow = useRef<InstancedMesh>(null);
   const arrows = useRef<InstancedMesh>(null);
   const heat = useRef<PointLight>(null);
   const flowTime = useRef(0);
+  const architectureReveal = useRef(0);
+  const architectureInspection = useRef(0);
   const coolantFocus = useRef(0);
   const previousSelection = useRef(reactor.selected);
   const initialZoom = useRef(80);
   const initialCamera = useRef(new Vector3());
   const camera = useThree((state) => state.camera);
+  const scene = useThree((state) => state.scene);
+  const renderer = useThree((state) => state.gl);
+  const inPower = power !== null;
   const size = useThree((state) => state.size);
   const invalidate = useThree((state) => state.invalidate);
+  useReactorNavigation(
+    !inPower && reactor.stage === "ready" && !journey.busy && visible,
+    reactor.view,
+  );
   const resources = useMemo(() => {
     const profile = [
-      new Vector2(0, -3.35),
-      new Vector2(1.6, -3.2),
-      new Vector2(2.6, -2.7),
-      new Vector2(2.75, -2.15),
-      new Vector2(2.75, 2.7),
-      new Vector2(2.5, 2.7),
-      new Vector2(2.5, -2.15),
-      new Vector2(2.37, -2.5),
-      new Vector2(1.5, -2.94),
-      new Vector2(0, -3.08),
+      new Vector2(0, -4),
+      new Vector2(1.3, -3.9),
+      new Vector2(2.05, -3.45),
+      new Vector2(2.2, -2.8),
+      new Vector2(2.2, 3.15),
+      new Vector2(2.04, 3.15),
+      new Vector2(2.04, -2.8),
+      new Vector2(1.9, -3.3),
+      new Vector2(1.2, -3.73),
+      new Vector2(0, -3.84),
     ];
     const curve = new CatmullRomCurve3(
       [
@@ -146,23 +163,45 @@ export function ReactorScene({
         Math.PI / 2,
         Math.PI * 1.5,
       ),
-      vessel: new LatheGeometry(profile, 64, Math.PI / 2, Math.PI * 1.5),
+      vessel: new LatheGeometry(profile, 64, Math.PI / 2, Math.PI),
       cut: new ShapeGeometry(new Shape(profile)),
       head: new LatheGeometry(
         [
-          new Vector2(0, 0.75),
-          new Vector2(1.45, 0.6),
-          new Vector2(2.75, 0),
-          new Vector2(2.75, -0.18),
-          new Vector2(2.4, -0.18),
-          new Vector2(1.4, 0.35),
-          new Vector2(0, 0.48),
+          new Vector2(0, 0.65),
+          new Vector2(1.5, 0.5),
+          new Vector2(2.3, 0),
+          new Vector2(2.3, -0.18),
+          new Vector2(2.04, -0.18),
+          new Vector2(1.4, 0.3),
+          new Vector2(0, 0.45),
         ],
         48,
         Math.PI / 2,
-        Math.PI * 1.5,
+        Math.PI,
       ),
-      ring: new TorusGeometry(2.65, 0.085, 8, 64),
+      ring: new TorusGeometry(2.23, 0.09, 8, 64),
+      band: new CylinderGeometry(2.22, 2.22, 0.5, 64, 1, true),
+      cutRim: new TubeGeometry(
+        new CatmullRomCurve3(
+          [
+            new Vector3(-2.13, 3.15, 0),
+            new Vector3(-2.13, -2.8, 0),
+            new Vector3(-1.9, -3.3, 0),
+            new Vector3(-1.2, -3.73, 0),
+            new Vector3(0, -3.84, 0),
+            new Vector3(1.2, -3.73, 0),
+            new Vector3(1.9, -3.3, 0),
+            new Vector3(2.13, -2.8, 0),
+            new Vector3(2.13, 3.15, 0),
+          ],
+          false,
+          "centripetal",
+        ),
+        100,
+        0.075,
+        10,
+        false,
+      ),
       box: new BoxGeometry(1, 1, 1),
       inlet: new TubeGeometry(
         new CatmullRomCurve3([
@@ -177,7 +216,7 @@ export function ReactorScene({
       ),
       outlet: new TubeGeometry(
         new CatmullRomCurve3([
-          new Vector3(2.5, 2.2, 0.4),
+          new Vector3(2.04, 2.2, 0.4),
           new Vector3(3.3, 2.2, 0.4),
           new Vector3(4.2, 2.2, 0.4),
         ]),
@@ -198,30 +237,30 @@ export function ReactorScene({
         transparent: true,
       }),
       fuel: new MeshStandardMaterial({
-        color: "#a89678",
-        metalness: 0.6,
-        roughness: 0.5,
-        emissive: "#d67b24",
-        emissiveIntensity: 0.2,
+        color: "#8c7554",
+        metalness: 0.62,
+        roughness: 0.49,
+        emissive: REACTOR_COLORS.fuelHeat,
+        emissiveIntensity: 0.8,
         transparent: true,
       }),
       control: new MeshStandardMaterial({
-        color: "#98afbd",
-        metalness: 0.7,
-        roughness: 0.42,
-        emissive: "#4a89ad",
+        color: "#a5a8a5",
+        metalness: 0.78,
+        roughness: 0.35,
+        emissive: REACTOR_COLORS.controlEmission,
         emissiveIntensity: 0.04,
         transparent: true,
       }),
       steel: new MeshStandardMaterial({
-        color: "#3f5665",
-        metalness: 0.65,
-        roughness: 0.55,
+        color: "#575b59",
+        metalness: 0.72,
+        roughness: 0.57,
         side: DoubleSide,
         transparent: true,
       }),
       edge: new MeshStandardMaterial({
-        color: "#a2a7a4",
+        color: "#a0a29b",
         metalness: 0.7,
         roughness: 0.4,
         side: DoubleSide,
@@ -234,18 +273,33 @@ export function ReactorScene({
         side: DoubleSide,
         transparent: true,
       }),
-      water: new MeshBasicMaterial({ color: "#399fea", transparent: true }),
+      water: new MeshBasicMaterial({
+        color: REACTOR_COLORS.coolant,
+        transparent: true,
+      }),
       path: new MeshBasicMaterial({
-        color: "#329feb",
+        color: REACTOR_COLORS.coolantPath,
         transparent: true,
         opacity: 0.3,
         depthWrite: false,
       }),
       neutron: new MeshBasicMaterial({
-        color: "#b8cedb",
+        color: REACTOR_COLORS.neutron,
         transparent: true,
         depthWrite: false,
       }),
+    };
+    materials.fuel.onBeforeCompile = (shader) => {
+      shader.vertexShader =
+        `varying float vHeatHeight;\n${shader.vertexShader}`.replace(
+          "#include <begin_vertex>",
+          "#include <begin_vertex>\nvHeatHeight = position.y + 0.5;",
+        );
+      shader.fragmentShader =
+        `varying float vHeatHeight;\n${shader.fragmentShader}`.replace(
+          "#include <emissivemap_fragment>",
+          "#include <emissivemap_fragment>\ntotalEmissiveRadiance *= mix(2.2, 0.12, smoothstep(0.05, 0.9, vHeatHeight));",
+        );
     };
     return {
       geometries,
@@ -257,10 +311,37 @@ export function ReactorScene({
       up: new Vector3(0, 1, 0),
       target: new Vector3(),
       focus: new Vector3(),
-      fuelColor: new Color("#a89678"),
-      fuelSelected: new Color("#e4bb79"),
+      viewOffset: new Vector3(),
+      viewUp: new Vector3(),
+      fuelColor: new Color(REACTOR_COLORS.fuelPellet),
+      fuelSelected: new Color(REACTOR_COLORS.selectedFuel),
     };
   }, []);
+
+  useEffect(() => {
+    const previous = scene.environment;
+    const intensity = scene.environmentIntensity;
+    const room = new RoomEnvironment();
+    const generator = new PMREMGenerator(renderer);
+    const environment = generator.fromScene(room, 0.04);
+    room.traverse((object) => {
+      if (object instanceof InstancedMesh) object.dispose();
+    });
+    room.dispose();
+    generator.dispose();
+    scene.environment = environment.texture;
+    invalidate();
+    return () => {
+      scene.environment = previous;
+      scene.environmentIntensity = intensity;
+      environment.dispose();
+    };
+  }, [scene, renderer, invalidate]);
+
+  useEffect(() => {
+    scene.environmentIntensity = inPower ? 0.18 : 0.48;
+    invalidate();
+  }, [scene, inPower, invalidate]);
 
   useLayoutEffect(() => {
     const { matrix } = resources;
@@ -283,19 +364,19 @@ export function ReactorScene({
     for (let index = 0; index < 25; index++)
       place(stack.current, index, 0, (index - 12) * 0.169, 0, 0.15, 0.15, 0.15);
     fuelPositions.forEach(([x, z], index) =>
-      place(fuel.current, index, x, 0, z, 0.125, 4.35, 0.125),
+      place(fuel.current, index, x, -0.15, z, 0.078, 6, 0.078),
     );
     CONTROL_ROD_POSITIONS.forEach(([x, z], index) =>
-      place(control.current, index, x, 1.15, z, 0.085, 4.7, 0.085),
+      place(control.current, index, x, 2.25, z, 0.08, 6.2, 0.08),
     );
     let gridIndex = 0;
-    for (const y of [-2.3, 2.3])
+    for (const y of [-3.15, 2.9])
       for (let row = -3; row <= 3; row++) {
         place(grid.current, gridIndex++, row * 0.48, y, 0, 0.05, 0.09, 3.35);
         place(grid.current, gridIndex++, 0, y, row * 0.48, 3.35, 0.09, 0.05);
       }
-    for (let index = 0; index < 3; index++) {
-      matrix.position.set(0, [-2.65, 2.72, 3.25][index], 0);
+    for (let index = 0; index < 4; index++) {
+      matrix.position.set(0, [-3.55, -3.1, 3.15, 3.6][index], 0);
       matrix.rotation.set(Math.PI / 2, 0, 0);
       matrix.scale.setScalar(1);
       matrix.updateMatrix();
@@ -306,14 +387,36 @@ export function ReactorScene({
       place(
         bolts.current,
         index,
-        Math.sin(angle) * 2.65,
-        2.82,
-        Math.cos(angle) * 2.65,
+        Math.sin(angle) * 2.22,
+        3.28,
+        Math.cos(angle) * 2.22,
         0.065,
         0.18,
         0.065,
       );
     }
+    for (let index = 0; index < 16; index++) {
+      const angle = (index * Math.PI * 2) / 16;
+      const radius = index < 8 ? 0.65 : 1.25;
+      const x = Math.sin(angle) * radius;
+      const z = Math.cos(angle) * radius;
+      const height = 1.7 + (index % 3) * 0.28;
+      place(drives.current, index, x, 3.75 + height / 2, z, 0.05, height, 0.05);
+      place(collars.current, index * 2, x, 3.9, z, 0.1, 0.16, 0.1);
+      place(
+        collars.current,
+        index * 2 + 1,
+        x,
+        3.75 + height,
+        z,
+        0.09,
+        0.12,
+        0.09,
+      );
+    }
+    place(collars.current, 32, 0, -4.05, 0, 1.65, 0.45, 1.65);
+    place(collars.current, 33, 0, 3.25, 0, 2.22, 0.18, 2.22);
+    place(collars.current, 34, 0, 3.65, 0, 1.7, 0.18, 1.7);
     for (let index = 0; index < 3; index++) {
       const progress = [0.23, 0.61, 0.9][index];
       resources.curve.getPointAt(progress, matrix.position);
@@ -330,6 +433,8 @@ export function ReactorScene({
       grid.current,
       flanges.current,
       bolts.current,
+      collars.current,
+      drives.current,
       arrows.current,
       neutrons.current,
     ];
@@ -357,6 +462,7 @@ export function ReactorScene({
   }, [
     reactor.stage,
     reactor.selected,
+    reactor.viewRevision,
     power?.run,
     playing,
     reducedMotion,
@@ -435,6 +541,8 @@ export function ReactorScene({
     const fuelFocus = inspection.fuel * context;
     const controlFocus = inspection.control * context;
     const focus = Math.min(1, fuelFocus + controlFocus);
+    architectureReveal.current = vesselReveal;
+    architectureInspection.current = focus;
     const separation = MathUtils.smootherstep(fuelFocus, 0.2, 0.95);
     const insertion = MathUtils.smootherstep(controlFocus, 0.35, 0.99) * 0.55;
     if (pellet.current) {
@@ -472,7 +580,7 @@ export function ReactorScene({
         : resources.fuelColor,
     );
     materials.fuel.emissiveIntensity =
-      reactor.selected === "fuel" ? 0.45 : 0.18;
+      reactor.selected === "fuel" ? 0.42 : 0.46;
     materials.control.emissiveIntensity =
       reactor.selected === "control" ? 0.6 : 0.03;
     if (detail.current) {
@@ -484,7 +592,7 @@ export function ReactorScene({
       );
       detail.current.scale.set(
         1 + separation * 1.1,
-        0.02 + rodReveal * 0.98,
+        (0.02 + rodReveal * 0.98) * 1.36,
         1 + separation * 1.1,
       );
     }
@@ -538,7 +646,9 @@ export function ReactorScene({
       vessel.current.position.y = -(1 - vesselReveal) * 0.4;
     }
     if (head.current) head.current.position.y = 3.25 + (1 - vesselReveal) * 0.8;
-    if (heat.current) heat.current.intensity = coreReveal * 3.8;
+    if (heat.current)
+      heat.current.intensity =
+        coreReveal * 16 * (power ? (root.current?.scale.x ?? 1) ** 2 : 1);
 
     if (!power) {
       const focusGoal =
@@ -554,16 +664,17 @@ export function ReactorScene({
         if (Math.abs(coolantFocus.current - focusGoal) < 0.0001)
           coolantFocus.current = focusGoal;
       }
-      resources.focus
-        .fromArray(REACTOR_PARTS.coolant.position)
-        .multiplyScalar(coolantFocus.current);
-      resources.focus.x += 2.4 * fuelFocus + 0.48 * controlFocus;
-      resources.focus.y += 0.35 * fuelFocus + 1.2 * controlFocus;
-      resources.focus.z += 2.4 * fuelFocus + 0.48 * controlFocus;
+      resources.focus.set(4.4 * orbit, 0.7 * orbit, 0);
+      resources.focus.lerp(resources.target.set(2.4, 0.35, 2.4), fuelFocus);
+      resources.focus.lerp(resources.target.set(0.48, 3.2, 0.48), controlFocus);
+      resources.focus.lerp(
+        resources.target.fromArray(REACTOR_PARTS.coolant.position),
+        coolantFocus.current,
+      );
       resources.target.set(
-        2.4 * (1 - orbit) + 11 * orbit,
-        1.7 * (1 - orbit) + 11 * orbit,
-        12 - orbit,
+        2.4 * (1 - orbit) + 8.5 * orbit,
+        1.7 * (1 - orbit) + 7.5 * orbit,
+        12 + 11 * orbit,
       );
       camera.position.lerpVectors(
         initialCamera.current,
@@ -576,11 +687,24 @@ export function ReactorScene({
         camera.position.z -= pointer.current.x * 0.12 * orbit;
       }
       camera.lookAt(resources.focus);
+      const navigation = reactor.view.current;
+      const navigationWeight = MathUtils.smoothstep(time, 5.3, 9.5);
+      resources.viewOffset
+        .set(1, 0, 0)
+        .applyQuaternion(camera.quaternion)
+        .multiplyScalar(navigation.x * navigationWeight);
+      resources.viewUp.set(0, 1, 0).applyQuaternion(camera.quaternion);
+      resources.viewOffset.addScaledVector(
+        resources.viewUp,
+        navigation.y * navigationWeight,
+      );
+      camera.position.add(resources.viewOffset);
+      resources.focus.add(resources.viewOffset);
       if (camera instanceof OrthographicCamera) {
         const compact = size.width < 600;
         const zoom = Math.min(
-          size.width / (compact ? 10.8 : 13.4),
-          size.height / (compact ? 10.8 : 12.1),
+          size.width / (compact ? 18.7 : 18.4),
+          size.height / (compact ? 15.8 : 14.5),
         );
         camera.zoom = MathUtils.lerp(
           initialZoom.current,
@@ -591,8 +715,15 @@ export function ReactorScene({
               controlFocus * 0.65),
           MathUtils.smoothstep(time, 0, 8.6),
         );
+        camera.zoom *= MathUtils.lerp(1, navigation.zoom, navigationWeight);
         camera.updateProjectionMatrix();
       }
+      const zoomText = `${Math.round(navigation.zoom * 100)}%`;
+      if (
+        reactor.zoomLabel.current &&
+        reactor.zoomLabel.current.textContent !== zoomText
+      )
+        reactor.zoomLabel.current.textContent = zoomText;
       camera.updateMatrixWorld();
     }
     if (playing && !reducedMotion && visible)
@@ -613,12 +744,33 @@ export function ReactorScene({
       flow.current.instanceMatrix.needsUpdate = true;
     }
     if (reactor.stage === "ready" && !power) {
+      for (let index = 0; index < REACTOR_ANNOTATIONS.length; index++) {
+        const label = reactor.annotations.current[index];
+        if (!label) continue;
+        resources.point
+          .fromArray(REACTOR_ANNOTATIONS[index].position)
+          .project(camera);
+        label.style.visibility =
+          Math.abs(resources.point.x) > 0.92 ||
+          Math.abs(resources.point.y) > 0.88
+            ? "hidden"
+            : "";
+        const x = MathUtils.clamp(
+          ((resources.point.x + 1) * size.width) / 2,
+          REACTOR_ANNOTATIONS[index].side === "left" ? 194 : 12,
+          size.width - (REACTOR_ANNOTATIONS[index].side === "right" ? 232 : 20),
+        );
+        const y = ((1 - resources.point.y) * size.height) / 2;
+        label.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+      }
       for (let index = 0; index < REACTOR_PART_IDS.length; index++) {
         const button = reactor.hotspots.current[index];
         if (!button) continue;
         resources.point.fromArray(
           REACTOR_PARTS[REACTOR_PART_IDS[index]].position,
         );
+        if (index === 2 && !reactor.selected)
+          resources.point.set(-2.9, -2.85, 3.9);
         if (index === 0)
           resources.point.lerp(
             resources.target.set(1.75, 0.35, 3.05),
@@ -626,11 +778,16 @@ export function ReactorScene({
           );
         if (index === 1) resources.point.y -= insertion;
         resources.point.project(camera);
+        button.style.visibility =
+          Math.abs(resources.point.x) > 0.95 ||
+          Math.abs(resources.point.y) > 0.92
+            ? "hidden"
+            : "";
         let x = ((resources.point.x + 1) * size.width) / 2;
         let y = ((1 - resources.point.y) * size.height) / 2;
         if (focus > 0.01) {
           x = MathUtils.clamp(x, 26, size.width - 26);
-          y = MathUtils.clamp(y, size.width < 600 ? 28 : 200, size.height - 28);
+          y = MathUtils.clamp(y, size.width < 600 ? 28 : 120, size.height - 28);
         }
         button.style.transform = `translate3d(${x}px, ${y}px, 0)`;
       }
@@ -644,12 +801,12 @@ export function ReactorScene({
         const x = MathUtils.clamp(
           ((resources.point.x + 1) * size.width) / 2 + 32,
           12,
-          size.width - 158,
+          size.width - (size.width < 600 ? 157 : 197),
         );
         const y = MathUtils.clamp(
           ((1 - resources.point.y) * size.height) / 2 - 12,
           12,
-          size.height - 40,
+          size.height - 64,
         );
         reactor.label.current.style.transform = `translate3d(${x}px, ${y}px, 0)`;
       }
@@ -660,6 +817,13 @@ export function ReactorScene({
   const { geometries: g, materials: m } = resources;
   return (
     <group ref={root} dispose={null}>
+      <ReactorArchitecture
+        reveal={architectureReveal}
+        inspection={architectureInspection}
+        flowTime={flowTime}
+        power={power}
+        journey={journey}
+      />
       <mesh
         ref={pellet}
         geometry={g.pellet}
@@ -694,6 +858,13 @@ export function ReactorScene({
         />
         <group ref={absorbers}>
           <instancedMesh
+            ref={drives}
+            args={[g.cylinder, m.control, 16]}
+            frustumCulled={false}
+            castShadow
+            receiveShadow
+          />
+          <instancedMesh
             ref={control}
             args={[g.cylinder, m.control, CONTROL_ROD_POSITIONS.length]}
             frustumCulled={false}
@@ -721,10 +892,10 @@ export function ReactorScene({
         />
         <pointLight
           ref={heat}
-          position={[0.7, -0.4, 1.2]}
-          color="#ef9b47"
+          position={[0.3, -2.6, 1.4]}
+          color={SCENE_LIGHTS.reactor.core}
           intensity={0}
-          distance={7}
+          distance={9}
           decay={2}
         />
         <group ref={vessel} visible={false}>
@@ -736,10 +907,12 @@ export function ReactorScene({
           />
           <mesh geometry={g.cut} material={m.edge} />
           <mesh
-            geometry={g.cut}
+            geometry={g.cutRim}
             material={m.edge}
-            rotation={[0, -Math.PI / 2, 0]}
+            castShadow
+            receiveShadow
           />
+          <mesh geometry={g.cut} material={m.edge} rotation={[0, Math.PI, 0]} />
           <mesh
             ref={head}
             geometry={g.head}
@@ -750,13 +923,27 @@ export function ReactorScene({
           />
           <instancedMesh
             ref={flanges}
-            args={[g.ring, m.edge, 3]}
+            args={[g.ring, m.edge, 4]}
             frustumCulled={false}
+          />
+          <mesh
+            geometry={g.band}
+            material={m.edge}
+            position={[0, 3.35, 0]}
+            castShadow
+            receiveShadow
           />
           <instancedMesh
             ref={bolts}
             args={[g.cylinder, m.edge, 24]}
             frustumCulled={false}
+          />
+          <instancedMesh
+            ref={collars}
+            args={[g.cylinder, m.edge, 35]}
+            frustumCulled={false}
+            castShadow
+            receiveShadow
           />
           <mesh geometry={g.inlet} material={m.steel} />
           <mesh geometry={g.outlet} material={m.steel} />

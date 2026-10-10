@@ -26,7 +26,8 @@ export const CITY_PLACES = {
 } as const;
 
 export const CITY_LIGHT_TIMING = [
-  12.6, 13.55, 14.05, 13.15, 15.9, 17.3, 17.5, 18.25, 17.1, 18.1, 18.7,
+  12.6, 13.55, 14.05, 13.15, 15.9, 17.3, 17.5, 18.25, 17.1, 18.1, 18.7, 17.6,
+  18.2, 18.6, 18.8, 17.9, 18.4, 18.6, 18.9, 19.0, 18.5,
 ] as const;
 
 export function cityBeatAt(time: number) {
@@ -36,7 +37,13 @@ export function cityBeatAt(time: number) {
   return "neighborhood";
 }
 
-export const COOLANT_TRANSFER = { travel: 6, leave: 1.4, scene: 3.2 } as const;
+export const COOLANT_TRANSFER = {
+  travel: 6,
+  steamTravel: 5.8,
+  leave: 2,
+  scene: 3.2,
+  turbineScene: 5.7,
+} as const;
 
 export const POWER_PARTS = {
   heat: {
@@ -88,7 +95,7 @@ export const POWER_PARTS = {
     title: "A world,\nilluminated.",
     description:
       "A light at home. A hospital at work. Streets that connect us. Electricity supports everyday life and essential public services. This city illustrates that connection; one atom cannot power a city.",
-    position: [7, 2.4, 4.5],
+    position: [10.2, 1, 6],
     source:
       "https://www.eia.gov/energyexplained/electricity/delivery-to-consumers.php",
     sourceLabel: "U.S. EIA",
@@ -115,6 +122,16 @@ export const CITY_BUILDINGS = [
   { x: 8.65, z: 3.2, width: 1.2, depth: 1.3, height: 2.3, kind: "tower" },
   { x: 10.5, z: 3.2, width: 1.2, depth: 1.15, height: 2.8, kind: "tower" },
   { x: 9.5, z: 5.6, width: 1.7, depth: 1.2, height: 1.8, kind: "tower" },
+  { x: 12.8, z: 1.3, width: 1.5, depth: 1.3, height: 4.6, kind: "tower" },
+  { x: 13.3, z: 3.55, width: 1.6, depth: 1.55, height: 3.3, kind: "tower" },
+  { x: 13.4, z: 5.7, width: 1.7, depth: 1.25, height: 2.5, kind: "tower" },
+  { x: 13.4, z: 8.65, width: 1.5, depth: 1.4, height: 3.1, kind: "tower" },
+  { x: 3.65, z: 8.65, width: 1.1, depth: 1.15, height: 1, kind: "home" },
+  { x: 5.35, z: 8.65, width: 1.15, depth: 1.2, height: 1.3, kind: "home" },
+  { x: 7.15, z: 8.55, width: 1.15, depth: 1.2, height: 1.15, kind: "home" },
+  { x: 9.25, z: 8.65, width: 1.7, depth: 1.5, height: 2.1, kind: "civic" },
+  { x: 3.7, z: 1.35, width: 1.15, depth: 1.15, height: 1.05, kind: "home" },
+  { x: 10.5, z: 8.6, width: 0.65, depth: 1.3, height: 1.4, kind: "civic" },
 ] as const;
 
 export function powerStageAt(time: number): PowerStage {

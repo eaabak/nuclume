@@ -23,18 +23,38 @@ export function usePower(
   const [cityBeat, setCityBeat] = useState(cityBeatAt(0));
   const cityView = useRef({ weight: 1, home: 0, hospital: 0 });
   const cityLabel = useRef<HTMLDivElement>(null);
+  const cityNavigation = useRef({ zoom: 1, x: 0, z: 0 });
+  const zoomLabel = useRef<HTMLOutputElement>(null);
+  const [viewRevision, setViewRevision] = useState(0);
+  const [roomOpen, setRoomOpen] = useState(false);
+  const roomAmount = useRef(0);
+  const roomProgress = useRef(0);
+  const roomHotspot = useRef<HTMLButtonElement>(null);
   const [run, setRun] = useState(0);
   const elapsed = useRef(0);
   const sceneTime = useRef(0);
   const transferTime = useRef(0);
+  const transferProgress = useRef(0);
+  const returnStart = useRef(0);
   const [transfer, setTransfer] = useState<
-    "following" | "reading" | "leaving" | null
+    | "following"
+    | "reading"
+    | "steaming"
+    | "turbine"
+    | "returning"
+    | "leaving"
+    | null
   >(null);
   const [transferRun, setTransferRun] = useState(0);
   const hotspots = useRef<(HTMLButtonElement | null)[]>([]);
   const begin = useCallback(() => {
+    setRoomOpen(false);
+    roomAmount.current = 0;
+    roomProgress.current = 0;
     elapsed.current = reducedMotion ? POWER_TIMING.ready : 0;
     sceneTime.current = elapsed.current;
+    transferTime.current = 0;
+    transferProgress.current = 0;
     setTransfer(null);
     setStage(reducedMotion ? "ready" : "heat");
     setSelected(null);
@@ -45,6 +65,60 @@ export function usePower(
     cityView.current.hospital = 0;
     setRun((value) => value + 1);
   }, [reducedMotion]);
+
+  const enterRoom = useCallback(() => {
+    setRoomOpen(true);
+    if (window.innerWidth <= 760)
+      window.scrollTo({
+        top: 0,
+        behavior: reducedMotion ? "instant" : "smooth",
+      });
+  }, [reducedMotion]);
+
+  const leaveRoom = useCallback(() => {
+    setRoomOpen(false);
+    roomHotspot.current?.focus({ preventScroll: true });
+    if (window.innerWidth <= 760)
+      window.scrollTo({
+        top: 0,
+        behavior: reducedMotion ? "instant" : "smooth",
+      });
+  }, [reducedMotion]);
+
+  const zoomCity = useCallback((direction: number) => {
+    cityNavigation.current.zoom = Math.max(
+      1,
+      Math.min(4.5, cityNavigation.current.zoom * direction),
+    );
+    setViewRevision((value) => value + 1);
+  }, []);
+
+  const resetCityView = useCallback(() => {
+    cityNavigation.current.zoom = 1;
+    cityNavigation.current.x = 0;
+    cityNavigation.current.z = 0;
+    setSelected(null);
+    setCityPlace(null);
+    setViewRevision((value) => value + 1);
+  }, []);
+  const panCity = useCallback((x: number, z: number) => {
+    const navigation = cityNavigation.current;
+    navigation.x = Math.max(
+      -10,
+      Math.min(12, navigation.x + x / navigation.zoom),
+    );
+    navigation.z = Math.max(
+      -7,
+      Math.min(9, navigation.z + z / navigation.zoom),
+    );
+    setViewRevision((value) => value + 1);
+  }, []);
+
+  useEffect(() => {
+    cityNavigation.current.zoom = 1;
+    cityNavigation.current.x = 0;
+    cityNavigation.current.z = 0;
+  }, [selected, cityPlace, run]);
 
   const exploreCity = useCallback((place: CityPlace | null) => {
     setCityPlace(place);
@@ -61,34 +135,97 @@ export function usePower(
   }, []);
 
   const followCoolant = useCallback(() => {
+    setRoomOpen(false);
+    roomAmount.current = 0;
+    roomProgress.current = 0;
     transferTime.current = reducedMotion ? COOLANT_TRANSFER.travel : 0;
+    transferProgress.current = 0;
     sceneTime.current = reducedMotion ? COOLANT_TRANSFER.scene : 0;
     setTransfer(reducedMotion ? "reading" : "following");
     setTransferRun((value) => value + 1);
   }, [reducedMotion]);
 
   const continuePower = useCallback(() => {
+    if (transfer === "reading") {
+      transferTime.current = reducedMotion ? COOLANT_TRANSFER.steamTravel : 0;
+      transferProgress.current = reducedMotion ? 1 : 0;
+      sceneTime.current = reducedMotion
+        ? COOLANT_TRANSFER.turbineScene
+        : COOLANT_TRANSFER.scene;
+      setTransfer(reducedMotion ? "turbine" : "steaming");
+      return;
+    }
+    if (transfer !== "turbine") return;
     elapsed.current = reducedMotion
       ? POWER_TIMING.ready
-      : Math.max(COOLANT_TRANSFER.scene, elapsed.current);
+      : Math.max(COOLANT_TRANSFER.turbineScene, elapsed.current);
     setStage(powerStageAt(elapsed.current));
     setCityBeat(cityBeatAt(elapsed.current));
     transferTime.current = 0;
     if (reducedMotion) sceneTime.current = elapsed.current;
     setTransfer(reducedMotion ? null : "leaving");
-  }, [reducedMotion]);
+  }, [reducedMotion, transfer]);
+
+  const returnToHeat = useCallback(() => {
+    if (transfer !== "steaming" && transfer !== "turbine") return;
+    returnStart.current = transferProgress.current;
+    transferTime.current = 0;
+    if (reducedMotion || returnStart.current === 0) {
+      transferProgress.current = 0;
+      transferTime.current = COOLANT_TRANSFER.travel;
+      sceneTime.current = COOLANT_TRANSFER.scene;
+      setTransfer("reading");
+    } else setTransfer("returning");
+  }, [reducedMotion, transfer]);
+
+  const replayTransfer = useCallback(() => {
+    if (!transfer || transfer === "leaving") return;
+    followCoolant();
+  }, [followCoolant, transfer]);
+
+  const skipTransfer = useCallback(() => {
+    if (transfer === "steaming") {
+      transferTime.current = COOLANT_TRANSFER.steamTravel;
+      transferProgress.current = 1;
+      sceneTime.current = COOLANT_TRANSFER.turbineScene;
+      setTransfer("turbine");
+    } else if (transfer === "following" || transfer === "returning") {
+      transferTime.current = COOLANT_TRANSFER.travel;
+      transferProgress.current = 0;
+      sceneTime.current = COOLANT_TRANSFER.scene;
+      setTransfer("reading");
+    }
+  }, [transfer]);
 
   useEffect(() => {
-    if (!active || transfer === "reading") return;
+    if (!active || roomOpen || transfer === "reading" || transfer === "turbine")
+      return;
     if (transfer) {
       const leaving = transfer === "leaving";
+      const steaming = transfer === "steaming";
+      const returning = transfer === "returning";
       const duration = leaving
         ? COOLANT_TRANSFER.leave
-        : COOLANT_TRANSFER.travel;
+        : steaming
+          ? COOLANT_TRANSFER.steamTravel
+          : returning
+            ? COOLANT_TRANSFER.steamTravel * returnStart.current
+            : COOLANT_TRANSFER.travel;
       const finish = () => {
         transferTime.current = duration;
-        sceneTime.current = leaving ? elapsed.current : COOLANT_TRANSFER.scene;
-        setTransfer(leaving ? null : "reading");
+        if (leaving) {
+          sceneTime.current = elapsed.current;
+          setTransfer(null);
+        } else if (steaming) {
+          transferProgress.current = 1;
+          sceneTime.current = COOLANT_TRANSFER.turbineScene;
+          setTransfer("turbine");
+        } else {
+          transferProgress.current = 0;
+          transferTime.current = COOLANT_TRANSFER.travel;
+          sceneTime.current = COOLANT_TRANSFER.scene;
+          setTransfer("reading");
+        }
       };
       if (reducedMotion) {
         finish();
@@ -108,7 +245,7 @@ export function usePower(
           0,
           Math.min(
             1,
-            leaving
+            leaving || steaming || returning
               ? transferTime.current / duration
               : (transferTime.current - 0.4) / 2.2,
           ),
@@ -118,10 +255,21 @@ export function usePower(
           progress *
           progress *
           (progress * (progress * 6 - 15) + 10);
-        sceneTime.current = leaving
-          ? COOLANT_TRANSFER.scene +
-            (elapsed.current - COOLANT_TRANSFER.scene) * eased
-          : COOLANT_TRANSFER.scene * eased;
+        if (steaming || returning) {
+          const along = steaming
+            ? progress
+            : returnStart.current * (1 - eased);
+          transferProgress.current = along;
+          const route = along * along * along * (along * (along * 6 - 15) + 10);
+          sceneTime.current =
+            COOLANT_TRANSFER.scene +
+            (COOLANT_TRANSFER.turbineScene - COOLANT_TRANSFER.scene) * route;
+        } else {
+          sceneTime.current = leaving
+            ? COOLANT_TRANSFER.turbineScene +
+              (elapsed.current - COOLANT_TRANSFER.turbineScene) * eased
+            : COOLANT_TRANSFER.scene * eased;
+        }
         if (transferTime.current >= duration) finish();
         else frame = requestAnimationFrame(tick);
       };
@@ -165,6 +313,7 @@ export function usePower(
     transfer,
     transferRun,
     cityBeat,
+    roomOpen,
   ]);
 
   return {
@@ -176,6 +325,18 @@ export function usePower(
     cityBeat,
     cityView,
     cityLabel,
+    cityNavigation,
+    zoomLabel,
+    zoomCity,
+    resetCityView,
+    panCity,
+    viewRevision,
+    roomOpen,
+    roomAmount,
+    roomProgress,
+    roomHotspot,
+    enterRoom,
+    leaveRoom,
     labelPlace: !transfer
       ? stage === "city" && (cityBeat === "home" || cityBeat === "hospital")
         ? cityBeat
@@ -189,9 +350,13 @@ export function usePower(
     sceneTime,
     transfer,
     transferTime,
+    transferProgress,
     transferRun,
     followCoolant,
     continuePower,
+    returnToHeat,
+    replayTransfer,
+    skipTransfer,
     hotspots,
     run,
     begin,

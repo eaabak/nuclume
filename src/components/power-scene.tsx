@@ -1,5 +1,6 @@
 "use client";
 
+import { CITY_COLORS, POWER_COLORS, SCENE_LIGHTS } from "@/lib/scene-colors";
 import { useFrame, useThree } from "@react-three/fiber";
 import { journeyTime, type JourneyController } from "./use-journey";
 import {
@@ -17,6 +18,7 @@ import {
   CylinderGeometry,
   DoubleSide,
   DynamicDrawUsage,
+  Fog,
   Group,
   InstancedMesh,
   MathUtils,
@@ -41,7 +43,10 @@ import {
 } from "@/lib/power";
 import { REACTOR_PARTS } from "@/lib/reactor";
 import type { PowerController } from "./use-power";
-import type { ViewOrientation } from "./nucleus-canvas";
+import type { ViewOrientation } from "@/lib/scene";
+import { ControlRoom } from "./control-room";
+import { PowerLandscape } from "./power-landscape";
+import { CitySignature } from "./city-signature";
 
 type Placement = [number, number, number, number, number, number, number?];
 type Batch =
@@ -52,12 +57,12 @@ type Batch =
   | "marks"
   | "lamps"
   | "bulbs"
-  | "trees"
   | "beams"
   | "blades"
   | "coils"
   | "steam"
   | "primary"
+  | "exchange"
   | "secondary"
   | "electric";
 
@@ -94,7 +99,6 @@ export function PowerScene({
 }) {
   const meshes = useRef<Partial<Record<Batch, InstancedMesh | null>>>({});
   const root = useRef<Group>(null);
-  const plant = useRef<Group>(null);
   const exchanger = useRef<Group>(null);
   const turbine = useRef<Group>(null);
   const generator = useRef<Group>(null);
@@ -104,11 +108,18 @@ export function PowerScene({
   const armature = useRef<Group>(null);
   const cityLight = useRef<PointLight>(null);
   const clock = useRef(0);
+  const rotorAngle = useRef(0.3);
   const lastIllumination = useRef(-1);
   const previousSelection = useRef(power.selected);
   const previousPlace = useRef(power.cityPlace);
+  const previousRoom = useRef(power.roomOpen);
+  const surroundings = useRef<Group>(null);
+  const landscapeTime = useRef(0);
   const camera = useThree((state) => state.camera);
+  const scene = useThree((state) => state.scene);
+  const renderer = useThree((state) => state.gl);
   const secondaryWater = useRef<Mesh>(null);
+  const shaftMark = useRef<Mesh>(null);
   const size = useThree((state) => state.size);
   const invalidate = useThree((state) => state.invalidate);
   const resources = useMemo(() => {
@@ -121,15 +132,21 @@ export function PowerScene({
     const steam = curve([
       [-3.4, 2.15, -1],
       [-3.4, 2.6, -1],
-      [-1.8, 2.6, -1],
-      [-1.7, 0.5, -1],
+      [-2.45, 2.6, -1],
+      [-2.18, 2.32, -1],
+      [-2.18, 0.38, -1],
+      [-2.06, 0, -1],
+      [-1.75, 0, -1],
     ]);
     const electric = curve([
       [3.05, 0, -1],
       [3.8, -0.65, -1],
-      [4.7, 2.65, -0.7],
-      [5.4, 2.42, 0.1],
-      [6.1, 2.65, 0.9],
+      [4.4, 2.65, -1.2],
+      [5.1, 2.25, -0.7],
+      [5.9, 2.65, -0.2],
+      [6.6, 2.25, 0.15],
+      [7.3, 2.65, 0.5],
+      [7.6, -0.65, 1.1],
       [4.3, -0.65, 2.1],
     ]);
     const distribution = curve([
@@ -142,40 +159,74 @@ export function PowerScene({
     steam.getLengths(200);
     electric.getLengths(200);
     distribution.getLengths(200);
-    const coil: Vector3[] = [new Vector3(-3.4, -0.8, -1)];
+    const coil: Vector3[] = [];
     for (let index = 0; index <= 144; index++) {
-      const angle = (index / 144) * Math.PI * 9;
+      const angle = -Math.PI / 2 + (index / 144) * Math.PI * 9;
       coil.push(
         new Vector3(
           -3.4 + Math.cos(angle) * 0.53,
-          -0.8 + (index / 144) * 2.1,
+          1.3 - (index / 144) * 2.1,
           -1 + Math.sin(angle) * 0.53,
         ),
       );
     }
-    coil.push(new Vector3(-3.4, 1.3, -1));
     const primaryHot = curve([
       [-4.92, 0.88, -0.84],
       [-4.6, 0.88, -0.84],
-      [-4.4, 1.3, -1],
-      [-3.4, 1.3, -1],
+      [-4.35, 1.3, -1.2],
+      [-3.9, 1.33, -1.53],
+      [-3.4, 1.3, -1.53],
     ]);
     const primaryCoil = new CatmullRomCurve3(coil);
     primaryHot.getLengths(200);
     primaryCoil.getLengths(200);
+    const primaryReturn = curve([
+      [-3.4, -0.8, -0.47],
+      [-3.85, -0.95, -0.47],
+      [-4.2, -1.1, 0.7],
+      [-6.6, -1.1, 0.7],
+      [-6.6, 0.44, 0.68],
+    ]);
+    const primaryPath = new CatmullRomCurve3([
+      ...primaryHot.points.slice(0, -1),
+      ...coil,
+      ...primaryReturn.points.slice(1),
+    ]);
+    primaryPath.arcLengthDivisions = 800;
+    const primaryCircuit = new TubeGeometry(primaryPath, 320, 0.07, 12, false);
+    const length =
+      primaryHot.getLength() +
+      primaryCoil.getLength() +
+      primaryReturn.getLength();
+    const firstCoil = Math.round((primaryHot.getLength() / length) * 320) * 72;
+    const lastCoil =
+      Math.round(
+        ((primaryHot.getLength() + primaryCoil.getLength()) / length) * 320,
+      ) * 72;
+    primaryCircuit.clearGroups();
+    primaryCircuit.addGroup(0, firstCoil, 0);
+    primaryCircuit.addGroup(firstCoil, lastCoil - firstCoil, 1);
+    primaryCircuit.addGroup(lastCoil, 320 * 72 - lastCoil, 0);
     const secondaryRise = curve([
       [-3.3, -0.9, -0.32],
       [-3.65, 0, -0.37],
       [-3.45, 1.4, -0.36],
       [-3.4, 2.15, -1],
-      [-3.4, 2.6, -1],
     ]);
     secondaryRise.getLengths(200);
+    const blade = new BoxGeometry(1, 1, 1, 1, 6, 1);
+    const vertices = blade.getAttribute("position");
+    for (let index = 0; index < vertices.count; index++) {
+      const y = vertices.getY(index);
+      vertices.setX(index, vertices.getX(index) + y * y * 1.3);
+      vertices.setZ(index, vertices.getZ(index) + y * 0.65);
+    }
+    blade.computeVertexNormals();
     const geometries = {
+      blade,
       box: new BoxGeometry(1, 1, 1),
       cylinder: new CylinderGeometry(1, 1, 1, 20),
       roof: new ConeGeometry(1, 1, 4),
-      tree: new ConeGeometry(1, 1, 7),
       shell: new CylinderGeometry(
         1,
         1,
@@ -190,20 +241,7 @@ export function PowerScene({
       ring: new TorusGeometry(1, 0.045, 8, 40),
       winding: new TorusGeometry(0.5, 0.045, 6, 32),
       drop: new SphereGeometry(0.055, 8, 6),
-      primaryHot: new TubeGeometry(primaryHot, 28, 0.055, 8, false),
-      primaryCoil: new TubeGeometry(primaryCoil, 180, 0.055, 6, false),
-      primaryReturn: new TubeGeometry(
-        curve([
-          [-3.4, -0.8, -1],
-          [-4.2, -1.1, 0.7],
-          [-6.6, -1.1, 0.7],
-          [-6.6, 0.44, 0.68],
-        ]),
-        48,
-        0.055,
-        8,
-        false,
-      ),
+      primaryCircuit,
       steam: new TubeGeometry(steam, 60, 0.065, 8, false),
       condensate: new TubeGeometry(
         curve([
@@ -234,12 +272,6 @@ export function PowerScene({
         metalness: 0.45,
         roughness: 0.65,
       }),
-      platform: new MeshStandardMaterial({
-        color: "#18232c",
-        metalness: 0.35,
-        roughness: 0.8,
-        transparent: true,
-      }),
       copper: new MeshStandardMaterial({
         color: "#ba8856",
         metalness: 0.6,
@@ -247,15 +279,51 @@ export function PowerScene({
         emissive: "#8d430f",
         emissiveIntensity: 0.18,
       }),
-      heat: new MeshBasicMaterial({ color: "#df9e54", transparent: true }),
-      steam: new MeshBasicMaterial({ color: "#f4bf7e", transparent: true }),
+      heat: new MeshBasicMaterial({
+        color: POWER_COLORS.heat,
+        transparent: true,
+      }),
+      coil: new MeshStandardMaterial({
+        color: "#92784e",
+        metalness: 0.65,
+        roughness: 0.42,
+        emissive: POWER_COLORS.coilEmission,
+        emissiveIntensity: 0.4,
+        transparent: true,
+      }),
+      steam: new MeshBasicMaterial({
+        color: POWER_COLORS.steam,
+        transparent: true,
+      }),
+      steamPipe: new MeshStandardMaterial({
+        color: "#8e8068",
+        metalness: 0.55,
+        roughness: 0.4,
+        emissive: POWER_COLORS.steamEmission,
+        emissiveIntensity: 0.32,
+        transparent: true,
+        depthWrite: false,
+      }),
+      primaryFlow: new MeshBasicMaterial({
+        color: POWER_COLORS.primaryFlow,
+        transparent: true,
+        depthWrite: false,
+        depthTest: false,
+      }),
+      exchange: new MeshBasicMaterial({
+        color: POWER_COLORS.heatTransfer,
+        transparent: true,
+        depthWrite: false,
+      }),
       water: new MeshStandardMaterial({
-        color: "#437897",
-        metalness: 0.4,
-        roughness: 0.5,
+        color: POWER_COLORS.primaryWater,
+        emissive: POWER_COLORS.primaryEmission,
+        emissiveIntensity: 0.65,
+        metalness: 0.55,
+        roughness: 0.35,
       }),
       secondary: new MeshStandardMaterial({
-        color: "#3c9cce",
+        color: POWER_COLORS.secondaryWater,
         roughness: 0.7,
         transparent: true,
         opacity: 0,
@@ -263,12 +331,13 @@ export function PowerScene({
         side: DoubleSide,
       }),
       wire: new MeshBasicMaterial({
-        color: "#48839e",
+        color: POWER_COLORS.transmissionWire,
+        toneMapped: false,
         transparent: true,
         opacity: 0.3,
       }),
       electric: new MeshBasicMaterial({
-        color: "#58beff",
+        color: POWER_COLORS.electricity,
         toneMapped: false,
         transparent: true,
       }),
@@ -278,29 +347,24 @@ export function PowerScene({
         roughness: 0.75,
       }),
       windows: new MeshBasicMaterial({ color: "white", toneMapped: false }),
-      road: new MeshStandardMaterial({ color: "#101b24", roughness: 0.94 }),
-      marks: new MeshBasicMaterial({ color: "#75818a" }),
+      road: new MeshStandardMaterial({
+        color: CITY_COLORS.road,
+        roughness: 0.94,
+      }),
+      marks: new MeshBasicMaterial({ color: CITY_COLORS.roadMarking }),
       roof: new MeshStandardMaterial({
         color: "#354957",
         metalness: 0.4,
         roughness: 0.7,
       }),
-      trees: new MeshStandardMaterial({ color: "#274846", roughness: 1 }),
       lamps: new MeshBasicMaterial({
-        color: "#ffe0a0",
+        color: CITY_COLORS.streetlight,
         toneMapped: false,
         transparent: true,
       }),
     };
     const placements: Record<
-      | "buildings"
-      | "windows"
-      | "roofs"
-      | "roads"
-      | "marks"
-      | "lamps"
-      | "bulbs"
-      | "trees",
+      "buildings" | "windows" | "roofs" | "roads" | "marks" | "lamps" | "bulbs",
       Placement[]
     > = {
       buildings: [],
@@ -310,7 +374,6 @@ export function PowerScene({
       marks: [],
       lamps: [],
       bulbs: [],
-      trees: [],
     };
     const windowDelays: number[] = [];
     const windowLevels: number[] = [];
@@ -324,7 +387,7 @@ export function PowerScene({
       windowDelays.push(CITY_LIGHT_TIMING[building] + seed / 160 + row * 0.022);
       windowLevels.push(seed > 79 ? 0 : 0.48 + (seed / 100) * 0.52);
     };
-    const buildingColors = ["#526776", "#70808a", "#495b67", "#82908f"];
+    const buildingColors = CITY_COLORS.buildings;
     const colors: Color[] = [];
     CITY_BUILDINGS.forEach((building, index) => {
       const { x, z, width, depth, height, kind } = building;
@@ -372,9 +435,11 @@ export function PowerScene({
       }
     });
     placements.roads.push(
-      [6.8, -1.475, 4.3, 8.7, 0.025, 0.55],
+      [8.45, -1.475, 4.3, 12, 0.025, 0.55],
       [5.85, -1.472, 3.5, 0.5, 0.025, 7.1],
       [8, -1.472, 3.5, 0.48, 0.025, 7.1],
+      [8.55, -1.474, 7.25, 12, 0.025, 0.75],
+      [11.65, -1.472, 4.6, 0.75, 0.025, 10.2],
     );
     for (let index = 0; index < 18; index++)
       placements.marks.push([
@@ -385,23 +450,30 @@ export function PowerScene({
         0.01,
         0.025,
       ]);
+    for (let index = 0; index < 25; index++)
+      placements.marks.push([
+        2.8 + index * 0.47,
+        -1.45,
+        7.25,
+        0.21,
+        0.01,
+        0.026,
+      ]);
+    for (let index = 0; index < 21; index++)
+      placements.marks.push([
+        11.65,
+        -1.45,
+        -0.3 + index * 0.47,
+        0.026,
+        0.01,
+        0.21,
+      ]);
     for (let index = 0; index < 12; index++) {
       const x = 3 + (index % 6) * 1.5;
       const z = index < 6 ? 4.66 : 3.94;
       placements.lamps.push([x, -1, z, 0.025, 0.9, 0.025]);
       placements.bulbs.push([x, -0.53, z, 0.16, 0.055, 0.12]);
     }
-    for (const [x, z] of [
-      [2.8, 2.7],
-      [2.8, 6.3],
-      [4.25, 6.4],
-      [5.4, 6.4],
-      [7.6, 6.5],
-      [8.4, 6.5],
-      [10.5, 6.5],
-      [11, 2.4],
-    ])
-      placements.trees.push([x, -1.05, z, 0.3, 0.85, 0.3]);
     return {
       geometries,
       materials,
@@ -412,7 +484,9 @@ export function PowerScene({
       distribution,
       primaryHot,
       primaryCoil,
+      primaryPath,
       secondaryRise,
+      steam,
       flows: [
         { name: "steam" as const, curve: steam, count: 14, start: 3 },
         { name: "electric" as const, curve: electric, count: 20, start: 8.8 },
@@ -429,11 +503,18 @@ export function PowerScene({
       guideFocus: new Vector3(),
       guidePosition: new Vector3(),
       guideOffset: new Vector3(),
+      partFocus: new Vector3(),
+      roomFocus: new Vector3(-1.6, -0.82, 2.1),
+      roomCamera: new Vector3(2.4, 2.48, 7.1),
+      roomFog: new Fog(CITY_COLORS.roomFog, 80, 150),
+      gestureStart: new Vector3(),
+      gestureEnd: new Vector3(),
+      gestureDirection: new Vector3(),
       initialZoom: 80,
       tint: new Color(),
-      windowOff: new Color("#1d303b"),
-      windowOn: new Color("#ffce88"),
-      windowBlue: new Color("#84c6df"),
+      windowOff: new Color(CITY_COLORS.windowOff),
+      windowOn: new Color(CITY_COLORS.windowWarm),
+      windowBlue: new Color(CITY_COLORS.windowCool),
     };
   }, []);
 
@@ -454,8 +535,8 @@ export function PowerScene({
       });
     }
     for (let stage = 0; stage < 4; stage++) {
-      for (let blade = 0; blade < 12; blade++) {
-        const angle = (blade / 12) * Math.PI * 2;
+      for (let blade = 0; blade < 24; blade++) {
+        const angle = (blade / 24) * Math.PI * 2;
         const radius = 0.4 + stage * 0.065;
         matrix.position.set(
           -0.65 + stage * 0.43,
@@ -463,9 +544,9 @@ export function PowerScene({
           Math.sin(angle) * radius,
         );
         matrix.rotation.set(angle + 0.22, 0.12, 0);
-        matrix.scale.set(0.13, 0.36 + stage * 0.06, 0.12);
+        matrix.scale.set(0.12, 0.4 + stage * 0.06, 0.045);
         matrix.updateMatrix();
-        meshes.current.blades?.setMatrixAt(stage * 12 + blade, matrix.matrix);
+        meshes.current.blades?.setMatrixAt(stage * 24 + blade, matrix.matrix);
       }
     }
     for (let index = 0; index < 6; index++) {
@@ -495,29 +576,42 @@ export function PowerScene({
       meshes.current.beams?.setMatrixAt(beam++, matrix.matrix);
     };
     for (const [x, z] of [
-      [4.7, -0.7],
-      [6.1, 0.9],
+      [4.4, -1.2],
+      [5.9, -0.2],
+      [7.3, 0.5],
     ]) {
-      for (const direction of [-1, 1]) {
+      const corners = [
+        [-1, -1],
+        [1, -1],
+        [1, 1],
+        [-1, 1],
+      ];
+      corners.forEach(([sx, sz], face) => {
         connect(
-          [x + direction * 0.38, -1.4, z],
-          [x + direction * 0.1, 2.8, z],
-          0.04,
+          [x + sx * 0.38, -1.4, z + sz * 0.38],
+          [x + sx * 0.07, 2.95, z + sz * 0.07],
+          0.022,
         );
-        connect(
-          [x + direction * 0.32, -0.5, z],
-          [x - direction * 0.22, 0.9, z],
-          0.025,
-        );
-        connect(
-          [x + direction * 0.22, 0.9, z],
-          [x - direction * 0.1, 2.4, z],
-          0.025,
-        );
-      }
-      connect([x - 0.55, 2.65, z], [x + 0.55, 2.65, z], 0.05);
-      connect([x - 0.4, 2.12, z], [x + 0.4, 2.12, z], 0.04);
+        const [nx, nz] = corners[(face + 1) % 4];
+        for (let level = 0; level < 3; level++) {
+          const bottom = -1.4 + level * 1.35;
+          const width = 0.38 - level * 0.095;
+          connect(
+            [x + sx * width, bottom, z + sz * width],
+            [x + nx * (width - 0.095), bottom + 1.35, z + nz * (width - 0.095)],
+            0.012,
+          );
+          connect(
+            [x + nx * width, bottom, z + nz * width],
+            [x + sx * (width - 0.095), bottom + 1.35, z + sz * (width - 0.095)],
+            0.012,
+          );
+        }
+      });
+      connect([x - 0.55, 2.65, z], [x + 0.55, 2.65, z], 0.032);
+      connect([x - 0.4, 2.12, z], [x + 0.4, 2.12, z], 0.026);
     }
+    if (meshes.current.beams) meshes.current.beams.count = beam;
     const instances = Object.values(meshes.current);
     for (const mesh of instances) {
       if (!mesh) continue;
@@ -526,6 +620,7 @@ export function PowerScene({
     }
     meshes.current.steam?.instanceMatrix.setUsage(DynamicDrawUsage);
     meshes.current.primary?.instanceMatrix.setUsage(DynamicDrawUsage);
+    meshes.current.exchange?.instanceMatrix.setUsage(DynamicDrawUsage);
     meshes.current.secondary?.instanceMatrix.setUsage(DynamicDrawUsage);
     meshes.current.electric?.instanceMatrix.setUsage(DynamicDrawUsage);
     meshes.current.windows?.instanceColor?.setUsage(DynamicDrawUsage);
@@ -576,6 +671,8 @@ export function PowerScene({
     power.stage,
     power.selected,
     power.cityPlace,
+    power.roomOpen,
+    power.viewRevision,
     power.transfer,
     playing,
     visible,
@@ -593,13 +690,154 @@ export function PowerScene({
     },
     [resources],
   );
+  useEffect(() => {
+    const previous = scene.fog;
+    scene.fog = resources.roomFog;
+    return () => {
+      scene.fog = previous;
+    };
+  }, [scene, resources]);
+
+  useEffect(() => {
+    if (
+      power.stage !== "ready" ||
+      power.transfer ||
+      power.roomOpen ||
+      journey.busy
+    )
+      return;
+    const canvas = renderer.domElement;
+    const pointers = new Map<number, { x: number; y: number }>();
+    const ground = (x: number, y: number, target: Vector3) => {
+      const bounds = canvas.getBoundingClientRect();
+      target
+        .set(
+          ((x - bounds.left) / bounds.width) * 2 - 1,
+          1 - ((y - bounds.top) / bounds.height) * 2,
+          0,
+        )
+        .unproject(camera);
+      camera.getWorldDirection(resources.gestureDirection);
+      target.addScaledVector(
+        resources.gestureDirection,
+        (-1.5 - target.y) / resources.gestureDirection.y,
+      );
+    };
+    const pan = (x: number, z: number) => {
+      const navigation = power.cityNavigation.current;
+      navigation.x +=
+        MathUtils.clamp(resources.focus.x + x, -9, 16) - resources.focus.x;
+      navigation.z +=
+        MathUtils.clamp(resources.focus.z + z, -4, 11) - resources.focus.z;
+      invalidate();
+    };
+    const zoom = (factor: number, x: number, y: number) => {
+      const navigation = power.cityNavigation.current;
+      const next = MathUtils.clamp(navigation.zoom * factor, 1, 4.5);
+      const bounds = canvas.getBoundingClientRect();
+      ground(x, y, resources.gestureStart);
+      ground(
+        bounds.left + bounds.width / 2,
+        bounds.top + bounds.height / 2,
+        resources.gestureEnd,
+      );
+      resources.gestureStart
+        .sub(resources.gestureEnd)
+        .multiplyScalar(1 - navigation.zoom / next);
+      navigation.zoom = next;
+      pan(resources.gestureStart.x, resources.gestureStart.z);
+    };
+    const wheel = (event: WheelEvent) => {
+      if (power.roomAmount.current > 0.01) return;
+      event.preventDefault();
+      const units =
+        event.deltaMode === 1
+          ? 16
+          : event.deltaMode === 2
+            ? canvas.clientHeight
+            : 1;
+      zoom(
+        Math.exp(-MathUtils.clamp(event.deltaY * units, -240, 240) * 0.002),
+        event.clientX,
+        event.clientY,
+      );
+    };
+    const down = (event: PointerEvent) => {
+      if (event.button !== 0 || power.roomAmount.current > 0.01) return;
+      pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      canvas.setPointerCapture(event.pointerId);
+    };
+    const move = (event: PointerEvent) => {
+      const previous = pointers.get(event.pointerId);
+      if (!previous) return;
+      let other: { x: number; y: number } | undefined;
+      for (const [id, point] of pointers)
+        if (id !== event.pointerId) {
+          other = point;
+          break;
+        }
+      if (other) {
+        const distance = Math.hypot(previous.x - other.x, previous.y - other.y);
+        const next = Math.hypot(
+          event.clientX - other.x,
+          event.clientY - other.y,
+        );
+        if (distance > 8 && next > 8)
+          zoom(
+            next / distance,
+            (event.clientX + other.x) / 2,
+            (event.clientY + other.y) / 2,
+          );
+      } else {
+        ground(previous.x, previous.y, resources.gestureStart);
+        ground(event.clientX, event.clientY, resources.gestureEnd);
+        resources.gestureStart.sub(resources.gestureEnd);
+        pan(resources.gestureStart.x, resources.gestureStart.z);
+      }
+      previous.x = event.clientX;
+      previous.y = event.clientY;
+    };
+    const up = (event: PointerEvent) => {
+      pointers.delete(event.pointerId);
+      if (canvas.hasPointerCapture(event.pointerId))
+        canvas.releasePointerCapture(event.pointerId);
+    };
+    canvas.addEventListener("wheel", wheel, { passive: false });
+    canvas.addEventListener("pointerdown", down);
+    canvas.addEventListener("pointermove", move);
+    canvas.addEventListener("pointerup", up);
+    canvas.addEventListener("pointercancel", up);
+    canvas.addEventListener("lostpointercapture", up);
+    return () => {
+      canvas.removeEventListener("wheel", wheel);
+      canvas.removeEventListener("pointerdown", down);
+      canvas.removeEventListener("pointermove", move);
+      canvas.removeEventListener("pointerup", up);
+      canvas.removeEventListener("pointercancel", up);
+      canvas.removeEventListener("lostpointercapture", up);
+      for (const id of pointers.keys())
+        if (canvas.hasPointerCapture(id)) canvas.releasePointerCapture(id);
+    };
+  }, [
+    power.stage,
+    power.transfer,
+    power.roomOpen,
+    power.cityNavigation,
+    power.roomAmount,
+    journey.busy,
+    renderer,
+    camera,
+    resources,
+    invalidate,
+  ]);
 
   useFrame((_, delta) => {
     const time = journeyTime(journey, 3, power.sceneTime.current);
+    landscapeTime.current = time;
     const guideTime = journeyTime(
       journey,
       3,
-      power.transfer === "leaving"
+      power.transfer !== "following"
         ? COOLANT_TRANSFER.travel
         : power.transferTime.current,
     );
@@ -612,10 +850,23 @@ export function PowerScene({
           )
         : 0;
     const guided = power.transfer !== null;
+    const steamProgress = journeyTime(
+      journey,
+      3,
+      power.transferProgress.current,
+    );
+    const steamLead = MathUtils.clamp(
+      MathUtils.smootherstep(steamProgress, 0.1, 0.8),
+      0,
+      1,
+    );
+    const shaftFocus = MathUtils.smootherstep(steamProgress, 0.78, 1);
     const guideWeight = guided
       ? 1 - departure * MathUtils.smoothstep(time, 0, COOLANT_TRANSFER.scene)
       : 0;
     const sceneScale = 1 + guideWeight * 1.5;
+    if (surroundings.current)
+      surroundings.current.visible = guideWeight < 0.001 && time > 0.7;
     if (root.current) {
       root.current.scale.setScalar(sceneScale);
       root.current.position.set(16.5 * guideWeight, 0, 2.5 * guideWeight);
@@ -627,8 +878,6 @@ export function PowerScene({
     const outward = MathUtils.smoothstep(time, 7.5, 11.5);
     const cityReveal = MathUtils.smoothstep(time, 8.5, 11.2);
     const illumination = MathUtils.clamp(time, 12.6, 20);
-    if (plant.current) plant.current.visible = time > 0.2;
-    materials.platform.opacity = MathUtils.smoothstep(time, 0.2, 2);
     revealGroup(exchanger.current, time, 0.7, 2.7, -3.4, -1);
     if (guided && exchanger.current) {
       exchanger.current.visible = true;
@@ -636,8 +885,11 @@ export function PowerScene({
       exchanger.current.position.set(0, 0, 0);
     }
     revealGroup(turbine.current, time, 3.1, 4.4, -0.7, -1);
-    if (guided && power.transfer !== "leaving" && turbine.current)
-      turbine.current.visible = false;
+    if (guided && turbine.current) {
+      turbine.current.visible = true;
+      turbine.current.scale.setScalar(1);
+      turbine.current.position.set(0, 0, 0);
+    }
     revealGroup(generator.current, time, 5.8, 7.1, 2.2, -1);
     revealGroup(grid.current, time, 8.2, 10.4, 5.3, 0.2);
     if (city.current) {
@@ -646,9 +898,16 @@ export function PowerScene({
       city.current.position.y =
         -1.65 * (1 - city.current.scale.y) - (1 - cityReveal) * 0.7;
     }
-    const rotation = reducedMotion
-      ? 0.3
-      : clock.current * MathUtils.smoothstep(time, 3.6, 5.2) * 1.7;
+    if (playing && visible && !reducedMotion)
+      rotorAngle.current +=
+        Math.min(delta, 0.05) * MathUtils.smoothstep(time, 3.6, 5.2) * 1.7;
+    const rotation = reducedMotion ? 0.3 : rotorAngle.current;
+    if (shaftMark.current) {
+      shaftMark.current.position.y = Math.cos(rotation) * 0.122;
+      shaftMark.current.position.z = -1 + Math.sin(rotation) * 0.122;
+      shaftMark.current.rotation.x = rotation;
+      shaftMark.current.visible = guided && steamProgress > 0.7;
+    }
     if (rotor.current) rotor.current.rotation.x = rotation;
     if (armature.current) armature.current.rotation.x = rotation;
     const entry = MathUtils.lerp(
@@ -658,6 +917,8 @@ export function PowerScene({
     );
     materials.steel.opacity = entry;
     materials.water.opacity = entry;
+    materials.coil.opacity = entry;
+    materials.coil.depthWrite = entry === 1;
     materials.steel.depthWrite = entry === 1;
     materials.water.depthWrite = entry === 1;
     materials.heat.opacity =
@@ -667,13 +928,19 @@ export function PowerScene({
       MathUtils.smoothstep(guideTime, 3.6, 5.4),
       guideWeight,
     );
+    materials.steamPipe.opacity = materials.steam.opacity * 0.42;
+    materials.primaryFlow.opacity = guideWeight * 0.65;
+    materials.steamPipe.emissiveIntensity =
+      0.32 + steamLead * guideWeight * 0.55;
+    materials.coil.emissiveIntensity =
+      0.4 + guideWeight * (1 - steamLead * 0.7) * 0.45;
     materials.secondary.opacity =
       MathUtils.smoothstep(guideTime, 3.1, 5) * 0.16 * guideWeight;
     if (secondaryWater.current)
       secondaryWater.current.visible = guideWeight > 0;
     materials.wire.opacity = MathUtils.lerp(
       0.16,
-      0.7,
+      1,
       MathUtils.smoothstep(time, 8.8, 11.5),
     );
     materials.electric.opacity = MathUtils.smoothstep(time, 8.8, 10.7);
@@ -741,15 +1008,18 @@ export function PowerScene({
               matrix.position,
             );
           else curve.getPointAt(progress / 0.72, matrix.position);
-        } else curve.getPointAt(progress, matrix.position);
-        if (name === "steam" && guided) {
-          resources.secondaryRise.getPointAt(progress, resources.point);
-          matrix.position.lerp(resources.point, guideWeight);
-        }
+        } else if (guided && progress < 0.4) {
+          resources.secondaryRise.getPointAt(progress / 0.4, matrix.position);
+        } else
+          curve.getPointAt(
+            guided ? (progress - 0.4) / 0.6 : progress,
+            matrix.position,
+          );
+        resources.point.copy(matrix.position);
         matrix.rotation.set(0, 0, 0);
         const vapor =
           name === "steam" && guided
-            ? MathUtils.smoothstep(progress, 0.45, 0.6)
+            ? MathUtils.smoothstep(progress, 0.24, 0.39)
             : 1;
         matrix.scale.setScalar(
           progress <= reach ? MathUtils.lerp(1, vapor, guideWeight) : 0,
@@ -776,13 +1046,7 @@ export function PowerScene({
         for (let index = 0; index < 12; index++) {
           const progress =
             (index / 12 + (reducedMotion ? 0 : clock.current * 0.12)) % 1;
-          if (progress < 0.25)
-            resources.primaryHot.getPointAt(progress * 4, matrix.position);
-          else
-            resources.primaryCoil.getPointAt(
-              1 - (progress - 0.25) / 0.75,
-              matrix.position,
-            );
+          resources.primaryPath.getPointAt(progress, matrix.position);
           matrix.rotation.set(0, 0, 0);
           matrix.scale.setScalar(
             guideWeight * MathUtils.smoothstep(guideTime, 2.5, 3.3) * 0.85,
@@ -791,6 +1055,36 @@ export function PowerScene({
           mesh.setMatrixAt(index, matrix.matrix);
         }
         mesh.instanceMatrix.needsUpdate = true;
+      }
+    }
+
+    const exchange = meshes.current.exchange;
+    if (exchange) {
+      exchange.visible = guideWeight > 0 && guideTime > 4;
+      if (exchange.visible) {
+        materials.exchange.opacity = guideWeight * (1 - steamLead * 0.7) * 0.65;
+        for (let index = 0; index < 18; index++) {
+          const along = (index + 0.5) / 18;
+          resources.primaryCoil.getPointAt(along, matrix.position);
+          resources.direction
+            .set(matrix.position.x + 3.4, 0, matrix.position.z + 1)
+            .normalize();
+          const pulse = reducedMotion
+            ? 0.5
+            : (clock.current * 0.45 + index * 0.13) % 1;
+          matrix.position.addScaledVector(
+            resources.direction,
+            0.075 + pulse * 0.12,
+          );
+          matrix.quaternion.setFromUnitVectors(
+            resources.up,
+            resources.direction,
+          );
+          matrix.scale.set(0.005, 0.07 * Math.sin(pulse * Math.PI), 0.005);
+          matrix.updateMatrix();
+          exchange.setMatrixAt(index, matrix.matrix);
+        }
+        exchange.instanceMatrix.needsUpdate = true;
       }
     }
 
@@ -852,7 +1146,9 @@ export function PowerScene({
     const cityWeight = street * MathUtils.lerp(1, cityView.weight, exploration);
     resources.cityFocus.set(3.9, -0.6, 4.05);
     resources.cityFocus.lerp(resources.point.set(6.7, -0.25, 5.2), hospital);
-    resources.cityFocus.lerp(resources.point.set(6.9, 0, 3.6), neighborhood);
+    if (power.selected === "city") resources.point.set(8.5, 0, 4.8);
+    else resources.point.set(2, -1.2, 2.2);
+    resources.cityFocus.lerp(resources.point, neighborhood);
     resources.cityFocus.lerp(
       resources.point.fromArray(CITY_PLACES.home.position),
       cityView.home * exploration,
@@ -862,15 +1158,21 @@ export function PowerScene({
       cityView.hospital * exploration,
     );
     resources.focus.lerp(resources.cityFocus, cityWeight);
+    if (power.selected && power.selected !== "city")
+      resources.partFocus.fromArray(POWER_PARTS[power.selected].position);
+    resources.focus.lerp(
+      resources.partFocus,
+      (1 - cityView.weight) * exploration,
+    );
     resources.target
       .copy(resources.focus)
-      .add(resources.direction.set(16, 14.5, 16));
+      .add(resources.direction.set(16, 14.5, 22));
     camera.position.lerpVectors(
       resources.initialCamera,
       resources.target,
       opening,
     );
-    if (!reducedMotion) {
+    if (!reducedMotion && power.stage !== "ready") {
       camera.position.x += pointer.current.x * 0.18 * opening;
       camera.position.z -= pointer.current.x * 0.18 * opening;
     }
@@ -887,7 +1189,10 @@ export function PowerScene({
         opening,
       );
       const streetZoom = Math.min(size.width / 6.8, size.height / 5.7);
-      const neighborhoodZoom = Math.min(size.width / 12.6, size.height / 10.5);
+      const neighborhoodZoom =
+        power.selected === "city"
+          ? Math.min(size.width / 16.5, size.height / 12)
+          : Math.min(size.width / 27, size.height / 18);
       let cityZoom = MathUtils.lerp(streetZoom, neighborhoodZoom, neighborhood);
       cityZoom = MathUtils.lerp(
         cityZoom,
@@ -895,9 +1200,32 @@ export function PowerScene({
         Math.min(1, cityView.home + cityView.hospital) * exploration,
       );
       camera.zoom = MathUtils.lerp(camera.zoom, cityZoom, cityWeight);
+      camera.zoom = MathUtils.lerp(
+        camera.zoom,
+        Math.min(size.width / 8.5, size.height / 7.5),
+        (1 - cityView.weight) * exploration,
+      );
+    }
+    if (power.stage === "ready") {
+      const navigation = power.cityNavigation.current;
+      resources.focus.x += navigation.x;
+      resources.focus.z += navigation.z;
+      camera.position.x += navigation.x;
+      camera.position.z += navigation.z;
+      if (camera instanceof OrthographicCamera) camera.zoom *= navigation.zoom;
+      const label = `${Math.round(navigation.zoom * 100)}%`;
+      if (
+        power.zoomLabel.current &&
+        power.zoomLabel.current.textContent !== label
+      )
+        power.zoomLabel.current.textContent = label;
     }
     if (guided) {
-      const alongPipe = MathUtils.smootherstep(guideTime, 0.6, 4.7);
+      const alongPipe = MathUtils.clamp(
+        MathUtils.smootherstep(guideTime, 0.6, 4.7),
+        0,
+        1,
+      );
       const exchange = MathUtils.smootherstep(
         guideTime,
         4.5,
@@ -906,6 +1234,17 @@ export function PowerScene({
       resources.primaryHot.getPointAt(alongPipe, resources.guideFocus);
       resources.point.set(-3.4, 0.75, -1);
       resources.guideFocus.lerp(resources.point, exchange);
+      if (steamProgress > 0) {
+        resources.steam.getPointAt(steamLead, resources.point);
+        resources.guideFocus.lerp(
+          resources.point,
+          MathUtils.smootherstep(steamProgress, 0, 0.23),
+        );
+        resources.guideFocus.lerp(
+          resources.point.set(-0.45, 0.12, -1),
+          shaftFocus,
+        );
+      }
       resources.guideFocus.multiplyScalar(sceneScale);
       resources.guideFocus.x += 16.5 * guideWeight;
       resources.guideFocus.z += 2.5 * guideWeight;
@@ -922,6 +1261,10 @@ export function PowerScene({
         resources.point,
         MathUtils.smootherstep(guideTime, 0, 3),
       );
+      resources.guideOffset.lerp(
+        resources.point.set(9 * sceneScale, 7 * sceneScale, 13 * sceneScale),
+        MathUtils.smootherstep(steamProgress, 0.18, 0.95),
+      );
       resources.guidePosition
         .copy(resources.guideFocus)
         .add(resources.guideOffset);
@@ -937,7 +1280,11 @@ export function PowerScene({
       );
       if (camera instanceof OrthographicCamera) {
         const close =
-          Math.min(size.width / 6.5, size.height / 5.7) / sceneScale;
+          MathUtils.lerp(
+            Math.min(size.width / 6.5, size.height / 5.7),
+            Math.min(size.width / 5.4, size.height / 4.8),
+            shaftFocus,
+          ) / sceneScale;
         const zoom = MathUtils.lerp(
           resources.initialZoom,
           close,
@@ -945,6 +1292,49 @@ export function PowerScene({
         );
         camera.zoom = MathUtils.lerp(zoom, camera.zoom, departure);
       }
+    }
+    const roomTarget = power.roomOpen ? 1 : 0;
+    if (
+      reducedMotion ||
+      (!playing && previousRoom.current !== power.roomOpen)
+    ) {
+      power.roomProgress.current = roomTarget;
+    } else if (playing && visible && !journey.busy) {
+      power.roomProgress.current = MathUtils.clamp(
+        power.roomProgress.current +
+          ((power.roomOpen ? 1 : -1) * Math.min(delta, 0.05)) / 2.8,
+        0,
+        1,
+      );
+    }
+    previousRoom.current = power.roomOpen;
+    const room = MathUtils.smootherstep(power.roomProgress.current, 0, 1);
+    power.roomAmount.current = room;
+    resources.roomFog.near = MathUtils.lerp(80, 6.8, room);
+    resources.roomFog.far = MathUtils.lerp(150, 14, room);
+    if (!guided && room > 0) {
+      camera.position.lerp(resources.roomCamera, room);
+      resources.focus.lerp(resources.roomFocus, room);
+      if (camera instanceof OrthographicCamera)
+        camera.zoom = MathUtils.lerp(
+          camera.zoom,
+          Math.min(size.width / 4.8, size.height / 3.8),
+          room,
+        );
+    }
+    if (guided && size.width > 760 && camera instanceof OrthographicCamera) {
+      resources.direction
+        .copy(camera.position)
+        .sub(resources.focus)
+        .cross(resources.up)
+        .normalize();
+      const offset =
+        (size.width / camera.zoom) *
+        0.12 *
+        (1 - departure) *
+        MathUtils.smootherstep(guideTime, 0, 1.2);
+      camera.position.addScaledVector(resources.direction, offset);
+      resources.focus.addScaledVector(resources.direction, offset);
     }
     camera.lookAt(resources.focus);
     if (camera instanceof OrthographicCamera) camera.updateProjectionMatrix();
@@ -957,6 +1347,20 @@ export function PowerScene({
           .fromArray(POWER_PARTS[POWER_PART_IDS[index]].position)
           .project(camera);
         button.style.transform = `translate3d(${((resources.point.x + 1) * size.width) / 2}px, ${((1 - resources.point.y) * size.height) / 2}px, 0)`;
+      }
+      if (power.roomHotspot.current) {
+        resources.point.set(-1.6, 0.15, 2.1).project(camera);
+        const x = MathUtils.clamp(
+          ((resources.point.x + 1) * size.width) / 2,
+          95,
+          size.width - 95,
+        );
+        const y = MathUtils.clamp(
+          ((1 - resources.point.y) * size.height) / 2,
+          95,
+          size.height - 65,
+        );
+        power.roomHotspot.current.style.transform = `translate3d(${x}px, ${y}px, 0)`;
       }
     }
     if (power.labelPlace && power.cityLabel.current) {
@@ -981,13 +1385,17 @@ export function PowerScene({
   const { geometries: g, materials: m, placements: p } = resources;
   return (
     <group ref={root} dispose={null}>
-      <group ref={plant} visible={false}>
-        <mesh
-          geometry={g.box}
-          material={m.platform}
-          position={[-2.6, -1.65, -1]}
-          scale={[11.1, 0.3, 4.5]}
-          receiveShadow
+      <group ref={surroundings} visible={false}>
+        <PowerLandscape
+          time={landscapeTime}
+          playing={playing}
+          reducedMotion={reducedMotion}
+          visible={visible && !power.transfer}
+        />
+        <ControlRoom
+          amount={power.roomAmount}
+          onEnter={power.enterRoom}
+          enabled={power.stage === "ready" && !power.transfer && !journey.busy}
         />
       </group>
       <group ref={exchanger} visible={false}>
@@ -1012,9 +1420,7 @@ export function PowerScene({
           scale={0.87}
           rotation={[Math.PI / 2, 0, 0]}
         />
-        <mesh geometry={g.primaryHot} material={m.heat} />
-        <mesh geometry={g.primaryCoil} material={m.heat} />
-        <mesh geometry={g.primaryReturn} material={m.water} />
+        <mesh geometry={g.primaryCircuit} material={[m.water, m.coil]} />
         <mesh
           geometry={g.shell}
           material={m.secondary}
@@ -1027,11 +1433,19 @@ export function PowerScene({
           ref={(node) => {
             meshes.current.primary = node;
           }}
-          args={[g.drop, m.heat, 12]}
+          args={[g.drop, m.primaryFlow, 12]}
           frustumCulled={false}
           visible={false}
         />
-        <mesh geometry={g.steam} material={m.steam} />
+        <instancedMesh
+          ref={(node) => {
+            meshes.current.exchange = node;
+          }}
+          args={[g.cylinder, m.exchange, 18]}
+          frustumCulled={false}
+          visible={false}
+        />
+        <mesh geometry={g.steam} material={m.steamPipe} />
         <instancedMesh
           ref={(node) => {
             meshes.current.secondary = node;
@@ -1049,6 +1463,37 @@ export function PowerScene({
         />
       </group>
       <group ref={turbine} visible={false}>
+        <mesh
+          geometry={g.cylinder}
+          material={m.steel}
+          position={[-1.74, 0, -1]}
+          rotation={[0, 0, -Math.PI / 2]}
+          scale={[0.9, 0.14, 0.9]}
+          castShadow
+          receiveShadow
+        />
+        <mesh
+          geometry={g.cylinder}
+          material={m.steel}
+          position={[-1.94, 0, -1]}
+          rotation={[0, 0, -Math.PI / 2]}
+          scale={[0.16, 0.4, 0.16]}
+          castShadow
+        />
+        <mesh
+          geometry={g.ring}
+          material={m.copper}
+          position={[-2.1, 0, -1]}
+          rotation={[0, Math.PI / 2, 0]}
+          scale={0.22}
+        />
+        <mesh
+          geometry={g.ring}
+          material={m.steel}
+          position={[-1.74, 0, -1]}
+          rotation={[0, Math.PI / 2, 0]}
+          scale={0.9}
+        />
         <mesh
           geometry={g.casing}
           material={m.steel}
@@ -1071,12 +1516,20 @@ export function PowerScene({
           rotation={[0, 0, -Math.PI / 2]}
           scale={[0.12, 4.7, 0.12]}
         />
+        <mesh
+          ref={shaftMark}
+          geometry={g.box}
+          material={m.heat}
+          position={[0.4, 0.122, -1]}
+          scale={[0.85, 0.012, 0.035]}
+          visible={false}
+        />
         <group ref={rotor} position={[-0.7, 0, -1]}>
           <instancedMesh
             ref={(node) => {
               meshes.current.blades = node;
             }}
-            args={[g.box, m.steel, 48]}
+            args={[g.blade, m.steel, 96]}
             frustumCulled={false}
             castShadow
           />
@@ -1148,7 +1601,7 @@ export function PowerScene({
           ref={(node) => {
             meshes.current.beams = node;
           }}
-          args={[g.cylinder, m.steel, 16]}
+          args={[g.cylinder, m.steel, 90]}
           frustumCulled={false}
         />
         {[-0.12, 0, 0.12].map((offset) => (
@@ -1168,13 +1621,7 @@ export function PowerScene({
         />
       </group>
       <group ref={city} visible={false}>
-        <mesh
-          geometry={g.box}
-          material={m.platform}
-          position={[6.8, -1.65, 3.5]}
-          scale={[9, 0.32, 7.6]}
-          receiveShadow
-        />
+        <CitySignature time={landscapeTime} />
         <instancedMesh
           ref={(node) => {
             meshes.current.roads = node;
@@ -1226,13 +1673,6 @@ export function PowerScene({
           args={[g.box, m.windows, p.bulbs.length]}
           frustumCulled={false}
         />
-        <instancedMesh
-          ref={(node) => {
-            meshes.current.trees = node;
-          }}
-          args={[g.tree, m.trees, p.trees.length]}
-          frustumCulled={false}
-        />
         <mesh
           geometry={g.box}
           material={m.lamps}
@@ -1255,7 +1695,7 @@ export function PowerScene({
         <pointLight
           ref={cityLight}
           position={[7.5, 1, 4]}
-          color="#ffbc72"
+          color={SCENE_LIGHTS.power}
           intensity={0}
           distance={9}
           decay={2}

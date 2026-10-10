@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "NUCLUME — The First Atom",
+  title: "NUCLUME — From Atom to City",
   description:
-    "From a single atom to an entire city. Explore the 92 protons and 143 neutrons at the heart of uranium-235 in an interactive 3D experience.",
+    "An interactive journey from uranium-235 and nuclear fission through a pressurized water reactor to an illuminated city.",
 };
 
 export default function RootLayout({

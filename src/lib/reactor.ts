@@ -21,7 +21,7 @@ export const REACTOR_PARTS = {
       "Control rods absorb neutrons. A short insertion from above shows the absorber entering farther into the core. Captured neutrons cannot go on to cause fission.",
     detail: "Neutron absorption",
     note: "Illustrative movement and neutron paths. No reactor power or response is simulated.",
-    position: [0.65, 3.1, 0.65],
+    position: [0.65, 5.35, 0.65],
   },
   coolant: {
     number: "03",
@@ -40,6 +40,26 @@ export const REACTOR_PART_IDS: readonly ReactorPart[] = [
   "control",
   "coolant",
 ];
+export const REACTOR_ANNOTATIONS = [
+  {
+    label: "Reactor vessel",
+    detail: "Holds the core under high pressure",
+    position: [-2.2, 2.4, 0],
+    side: "left",
+  },
+  {
+    label: "Steam generator",
+    detail: "Heat transfers between separate circuits",
+    position: [9.2, 3.5, 0.1],
+    side: "right",
+  },
+  {
+    label: "Secondary circuit",
+    detail: "Steam out · feedwater in",
+    position: [10.1, -1, 0.5],
+    side: "right",
+  },
+] as const;
 export const FUEL_ROD_POSITIONS: [number, number][] = [];
 export const CONTROL_ROD_POSITIONS: [number, number][] = [];
 for (let x = -3; x <= 3; x++) {

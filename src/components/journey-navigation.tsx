@@ -5,6 +5,9 @@ import {
   type JourneyController,
   type JourneyPhase,
 } from "./use-journey";
+import { useLanguage } from "./language-provider";
+
+const turkishChapters = ["Atom", "Fisyon", "Reaktör", "Şehir"] as const;
 
 export function JourneyNavigation({
   journey,
@@ -15,15 +18,17 @@ export function JourneyNavigation({
   available: boolean[];
   onNavigate: (phase: JourneyPhase) => void;
 }) {
+  const { language, t } = useLanguage();
+  const chapters = language === "tr" ? turkishChapters : JOURNEY_CHAPTERS;
   return (
     <nav
       className="journey-navigation"
-      aria-label="Journey chapters"
+      aria-label={t("Journey chapters", "Yolculuğun bölümleri")}
       aria-busy={journey.busy}
     >
       <ol>
-        {JOURNEY_CHAPTERS.map((label, index) => (
-          <li key={label} data-visited={journey.visited[index]}>
+        {chapters.map((label, index) => (
+          <li key={index} data-visited={journey.visited[index]}>
             <button
               type="button"
               aria-label={`${index + 1}. ${label}`}
@@ -69,8 +74,14 @@ export function JourneyNavigation({
       </ol>
       <span className="sr-only" role="status" aria-live="polite">
         {journey.motion
-          ? `Moving to ${JOURNEY_CHAPTERS[journey.motion.to]}.`
-          : `${JOURNEY_CHAPTERS[journey.phase]}, chapter ${journey.phase + 1} of 4.`}
+          ? t(
+              `Moving to ${JOURNEY_CHAPTERS[journey.motion.to]}.`,
+              `${turkishChapters[journey.motion.to]} bölümüne geçiliyor.`,
+            )
+          : t(
+              `${JOURNEY_CHAPTERS[journey.phase]}, chapter ${journey.phase + 1} of 4.`,
+              `${turkishChapters[journey.phase]}, 4 bölümün ${journey.phase + 1}. bölümü.`,
+            )}
       </span>
     </nav>
   );

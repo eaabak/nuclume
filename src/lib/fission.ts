@@ -1,17 +1,14 @@
 import { NUCLEONS, type Nucleon } from "./nucleus";
 
 export type ReactionStage =
-  | "ready"
-  | "absorbing"
-  | "excited"
-  | "splitting"
-  | "complete";
+  "ready" | "absorbing" | "excited" | "splitting" | "complete" | "rewinding";
 export const REACTION_TIMING = {
   capture: 1.2,
   split: 2.5,
   finish: 6.2,
 } as const;
 export const NEUTRON_HOME: readonly [number, number, number] = [-3.65, -0.3, 1];
+export const FISSION_FRAGMENT_SCALE = 1.12;
 export const DAUGHTERS = [
   {
     symbol: "Ba",
@@ -19,7 +16,7 @@ export const DAUGHTERS = [
     mass: 141,
     protons: 56,
     neutrons: 85,
-    center: [-2.65, 0.4, 0.2],
+    center: [-2.45, 0.95, 0.35],
   },
   {
     symbol: "Kr",
@@ -27,7 +24,7 @@ export const DAUGHTERS = [
     mass: 92,
     protons: 36,
     neutrons: 56,
-    center: [3.05, -0.35, -0.3],
+    center: [2.75, -0.9, -0.5],
   },
 ] as const;
 
@@ -71,14 +68,21 @@ for (const fragment of [0, 1] as const) {
   particles
     .filter((particle) => assignments.get(particle) === fragment)
     .sort((a, b) => a.position[0] - b.position[0])
-    .forEach((particle, index) =>
-      destinations.set(particle, fragmentPositions[fragment][index].position),
-    );
+    .forEach((particle, index) => {
+      const [x, y, z] = fragmentPositions[fragment][index].position;
+      const twist = y * (fragment === 0 ? 0.16 : -0.19);
+      destinations.set(particle, [
+        (x * Math.cos(twist) - z * Math.sin(twist)) *
+          (fragment === 0 ? 0.98 : 1.2),
+        y * 1.23,
+        (x * Math.sin(twist) + z * Math.cos(twist)) * 0.94,
+      ]);
+    });
 }
 const outgoing: readonly (readonly [number, number, number])[] = [
-  [-1.1, 4.25, 1.2],
-  [1.9, 3.85, 1.7],
-  [0.2, -4.35, 1.5],
+  [3.5, 4.25, 1.2],
+  [6.1, 2.1, 1.7],
+  [-3.3, -3.65, 1.5],
 ];
 let emittedIndex = 0;
 

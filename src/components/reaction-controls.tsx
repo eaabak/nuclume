@@ -2,46 +2,92 @@
 
 import { useEffect, useRef, useState, type PointerEvent } from "react";
 import { DAUGHTERS, NEUTRON_HOME, type ReactionStage } from "@/lib/fission";
+import { useLanguage } from "./language-provider";
 import type { FissionController } from "./use-fission";
 
 const copy: Record<
   ReactionStage,
-  { label: string; title: string; detail: string }
+  { label: string; title: readonly [string, string]; detail: string }
 > = {
   ready: {
     label: "01 / THE ENCOUNTER",
-    title: "One small arrival.",
+    title: ["One small", "arrival."],
     detail: "Drag the neutron into the nucleus. Or select it to begin.",
   },
   absorbing: {
     label: "02 / CAPTURE",
-    title: "A moment of contact.",
+    title: ["A moment", "of contact."],
     detail: "Uranium-235 absorbs a neutron.",
   },
   excited: {
     label: "03 / EXCITATION",
-    title: "Too much to hold.",
+    title: ["Too much", "to hold."],
     detail: "For a brief moment, an excited uranium-236 nucleus forms.",
   },
   splitting: {
     label: "04 / FISSION",
-    title: "Energy, set free.",
-    detail: "Two fragments move apart. Three neutrons are released.",
+    title: ["A force", "released."],
+    detail:
+      "In nuclear fission, a nucleus splits, releasing neutrons and a large amount of energy.",
   },
   complete: {
     label: "04 / FISSION",
-    title: "A small beginning.\nAn immense release.",
-    detail: "Most of the released energy becomes motion of the fragments.",
+    title: ["A force", "released."],
+    detail:
+      "In nuclear fission, a nucleus splits, releasing neutrons and a large amount of energy.",
+  },
+  rewinding: {
+    label: "REPLAY",
+    title: ["A force", "released."],
+    detail: "Returning to the start of this illustration.",
+  },
+};
+
+const turkishCopy: typeof copy = {
+  ready: {
+    label: "01 / KARŞILAŞMA",
+    title: ["Küçük bir", "başlangıç."],
+    detail: "Nötronu çekirdeğe sürükleyin. Ya da başlamak için seçin.",
+  },
+  absorbing: {
+    label: "02 / YAKALANMA",
+    title: ["Bir temas", "anı."],
+    detail: "Uranyum-235 bir nötron soğurur.",
+  },
+  excited: {
+    label: "03 / UYARILMA",
+    title: ["İçinde tutmak", "artık zor."],
+    detail: "Kısa bir an için uyarılmış bir uranyum-236 çekirdeği oluşur.",
+  },
+  splitting: {
+    label: "04 / FİSYON",
+    title: ["Açığa çıkan", "bir güç."],
+    detail:
+      "Nükleer fisyonda bir çekirdek bölünür; nötronlar ve büyük miktarda enerji açığa çıkar.",
+  },
+  complete: {
+    label: "04 / FİSYON",
+    title: ["Açığa çıkan", "bir güç."],
+    detail:
+      "Nükleer fisyonda bir çekirdek bölünür; nötronlar ve büyük miktarda enerji açığa çıkar.",
+  },
+  rewinding: {
+    label: "TEKRAR",
+    title: ["Açığa çıkan", "bir güç."],
+    detail: "Bu gösterimin başlangıcına dönülüyor.",
   },
 };
 
 export function ReactionNeutron({
   reaction,
   fallback,
+  autoFocus = true,
 }: {
   reaction: FissionController;
   fallback: boolean;
+  autoFocus?: boolean;
 }) {
+  const { t } = useLanguage();
   const [dragging, setDragging] = useState(false);
   const gesture = useRef({
     x: 0,
@@ -53,8 +99,9 @@ export function ReactionNeutron({
   const home = useRef({ x: 0, y: 0 });
 
   useEffect(() => {
-    reaction.handle.current?.focus({ preventScroll: true });
-  }, [reaction.handle]);
+    if (autoFocus && reaction.stage === "ready")
+      reaction.handle.current?.focus({ preventScroll: true });
+  }, [autoFocus, reaction.handle, reaction.stage]);
 
   useEffect(() => {
     const button = reaction.handle.current;
@@ -72,7 +119,7 @@ export function ReactionNeutron({
       DAUGHTERS.forEach((daughter, index) => {
         const label = reaction.fragmentLabels.current[index];
         if (label)
-          label.style.transform = `translate3d(${width / 2 + (daughter.center[0] / 12) * Math.min(width, height)}px, ${height / 2 + ((daughter.center[1] + 2.6) / 12) * Math.min(width, height)}px, 0)`;
+          label.style.transform = `translate3d(${width / 2 + (daughter.center[0] / 12) * Math.min(width, height)}px, ${height / 2 + ((-daughter.center[1] + 2.6) / 12) * Math.min(width, height)}px, 0)`;
       });
     };
     update();
@@ -128,14 +175,14 @@ export function ReactionNeutron({
         className={`capture-target${dragging ? " is-dragging" : ""}`}
         aria-hidden="true"
       >
-        <span>RELEASE TO CAPTURE</span>
+        <span>{t("RELEASE TO CAPTURE", "YAKALANMASI İÇİN BIRAKIN")}</span>
       </div>
       <button
         ref={reaction.handle}
         className={`incoming-neutron${fallback ? " is-illustrated" : ""}${dragging ? " is-dragging" : ""}`}
         hidden={reaction.stage !== "ready"}
         id="incoming-neutron"
-        aria-label="Send neutron into nucleus"
+        aria-label={t("Send neutron into nucleus", "Nötronu çekirdeğe gönder")}
         aria-describedby="reaction-instruction"
         onPointerDown={(event) => {
           if (event.button !== 0) return;
@@ -213,7 +260,8 @@ export function ReactionNeutron({
       >
         <span className="neutron-orb" aria-hidden="true" />
         <span className="neutron-caption">
-          1 NEUTRON<span>DRAG / TAP</span>
+          {t("1 NEUTRON", "1 NÖTRON")}
+          <span>{t("DRAG / TAP", "SÜRÜKLE / DOKUN")}</span>
         </span>
       </button>
       <div
@@ -230,10 +278,28 @@ export function ReactionNeutron({
           >
             <sup>{daughter.mass}</sup>
             {daughter.symbol}
-            <small>{daughter.name}</small>
+            <small>
+              {t(
+                daughter.name,
+                daughter.symbol === "Ba" ? "Baryum-141" : "Kripton-92",
+              )}
+            </small>
           </span>
         ))}
       </div>
+      <span
+        ref={reaction.emissionLabel}
+        className="fission-neutron-label"
+        aria-hidden="true"
+        hidden={reaction.stage !== "complete" || fallback}
+      >
+        n
+        <small>
+          {t("NEUTRON", "NÖTRON")}
+          <br />
+          {t("RELEASED", "AÇIĞA ÇIKTI")}
+        </small>
+      </span>
     </>
   );
 }
@@ -249,17 +315,22 @@ export function ReactionControls({
   onReplay: () => void;
   onContinue: () => void;
 }) {
+  const { language, t } = useLanguage();
   const status = useRef<HTMLDivElement>(null);
-  const details = copy[reaction.stage];
+  const details = (language === "tr" ? turkishCopy : copy)[reaction.stage];
   useEffect(() => {
-    if (reaction.stage === "absorbing" || reaction.stage === "complete")
+    if (
+      reaction.stage === "absorbing" ||
+      reaction.stage === "complete" ||
+      reaction.stage === "rewinding"
+    )
       status.current?.focus({ preventScroll: true });
   }, [reaction.stage]);
 
   return (
     <>
       <button className="reaction-back" onClick={onBack}>
-        <span aria-hidden="true">←</span> The first atom
+        <span aria-hidden="true">←</span> {t("The first atom", "İlk atom")}
       </button>
       <div className="reaction-copy" data-stage={reaction.stage}>
         <div
@@ -272,22 +343,29 @@ export function ReactionControls({
           aria-atomic="true"
         >
           <p className="section-kicker">{details.label}</p>
-          <h1 id="reaction-title">{details.title}</h1>
+          <h1 id="reaction-title">
+            <span>{details.title[0]}</span>
+            <em>{details.title[1]}</em>
+          </h1>
           <p id="reaction-instruction">{details.detail}</p>
           {reaction.stage === "complete" && (
             <p
               className="reaction-equation"
-              aria-label="Uranium 235 plus one neutron forms excited uranium 236, then barium 141, krypton 92, three neutrons and energy"
+              aria-label={t(
+                "Uranium 235 plus one neutron forms excited uranium 236, then barium 141, krypton 92, three neutrons and energy",
+                "Uranyum 235 ve bir nötron, uyarılmış uranyum 236 oluşturur; ardından baryum 141, kripton 92, üç nötron ve enerji açığa çıkar",
+              )}
             >
               <sup>235</sup>U + n <span>→</span> <sup>236</sup>U* <span>→</span>{" "}
-              <sup>141</sup>Ba + <sup>92</sup>Kr + 3n + energy
+              <sup>141</sup>Ba + <sup>92</sup>Kr + 3n + {t("energy", "enerji")}
             </p>
           )}
         </div>
         <div className="reaction-actions">
           {reaction.stage === "ready" && (
             <button className="reaction-action" onClick={reaction.start}>
-              Send the neutron <span aria-hidden="true">↗</span>
+              {t("Send the neutron", "Nötronu gönder")}{" "}
+              <span aria-hidden="true">↗</span>
             </button>
           )}
           {reaction.stage === "complete" && (
@@ -296,20 +374,28 @@ export function ReactionControls({
               className="reaction-action reactor-entry"
               onClick={onContinue}
             >
-              Inside the reactor <span aria-hidden="true">↗</span>
+              {t("Inside the reactor", "Reaktörün içinde")}{" "}
+              <span aria-hidden="true">↗</span>
             </button>
           )}
           {reaction.stage === "complete" && (
             <button className="reaction-action" onClick={onReplay}>
-              Replay reaction <span aria-hidden="true">↺</span>
+              {t("Replay reaction", "Tepkimeyi tekrarla")}{" "}
+              <span aria-hidden="true">↺</span>
             </button>
           )}
           <p className="reaction-note">
-            Conceptual · not to scale
+            {t(
+              "Conceptual · not to scale",
+              "Kavramsal gösterim · ölçekli değildir",
+            )}
             {reaction.stage === "complete" && (
               <>
                 <br />
-                One possible fission channel. Timing and light are illustrative.
+                {t(
+                  "One possible channel. Light and trails are illustrative; most energy becomes fragment motion.",
+                  "Olası bölünme yollarından biri. Işık ve izler temsili olup enerjinin büyük bölümü parçaların hareketine dönüşür.",
+                )}
               </>
             )}
           </p>

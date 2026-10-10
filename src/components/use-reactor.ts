@@ -21,13 +21,37 @@ export function useReactor(
   const fromFission = useRef(true);
   const hotspots = useRef<(HTMLButtonElement | null)[]>([]);
   const label = useRef<HTMLDivElement>(null);
+  const annotations = useRef<(HTMLDivElement | null)[]>([]);
   const inspection = useRef({ fuel: 0, control: 0, time: 0 });
+  const view = useRef({ zoom: 1, x: 0, y: 0 });
+  const zoomLabel = useRef<HTMLOutputElement>(null);
+  const [viewRevision, setViewRevision] = useState(0);
+  const resetView = useCallback(() => {
+    Object.assign(view.current, { zoom: 1, x: 0, y: 0 });
+    setViewRevision((value) => value + 1);
+  }, []);
+  const zoomView = useCallback((factor: number) => {
+    view.current.zoom = Math.max(1, Math.min(4, view.current.zoom * factor));
+    setViewRevision((value) => value + 1);
+  }, []);
+  const panView = useCallback((x: number, y: number) => {
+    view.current.x = Math.max(
+      -8,
+      Math.min(8, view.current.x + x / view.current.zoom),
+    );
+    view.current.y = Math.max(
+      -6,
+      Math.min(6, view.current.y + y / view.current.zoom),
+    );
+    setViewRevision((value) => value + 1);
+  }, []);
   const setSelected = useCallback(
     (part: ReactorPart | null) => {
       if (part !== selected) inspection.current.time = 0;
+      resetView();
       setSelectedState(part);
     },
-    [selected],
+    [selected, resetView],
   );
 
   const begin = useCallback(
@@ -39,9 +63,10 @@ export function useReactor(
       inspection.current.fuel = 0;
       inspection.current.control = 0;
       inspection.current.time = 0;
+      resetView();
       setRun((value) => value + 1);
     },
-    [reducedMotion],
+    [reducedMotion, resetView],
   );
 
   useEffect(() => {
@@ -100,7 +125,14 @@ export function useReactor(
     fromFission,
     hotspots,
     label,
+    annotations,
     inspection,
+    view,
+    zoomLabel,
+    viewRevision,
+    zoomView,
+    panView,
+    resetView,
     run,
     begin,
   };

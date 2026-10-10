@@ -23,6 +23,7 @@ export function useFission(
   const handle = useRef<HTMLButtonElement>(null);
   const captureTarget = useRef<HTMLDivElement>(null);
   const fragmentLabels = useRef<(HTMLSpanElement | null)[]>([]);
+  const emissionLabel = useRef<HTMLSpanElement>(null);
 
   const reset = useCallback(() => {
     running.current = false;
@@ -40,9 +41,22 @@ export function useFission(
     setStage(reducedMotion ? "complete" : "absorbing");
   }, [reducedMotion]);
 
+  const replay = useCallback(() => {
+    if (reducedMotion || elapsed.current === 0) {
+      reset();
+      return;
+    }
+    running.current = true;
+    setStage("rewinding");
+  }, [reducedMotion, reset]);
+
   useEffect(() => {
     if (!active || !running.current) return;
     if (reducedMotion) {
+      if (stage === "rewinding") {
+        reset();
+        return;
+      }
       elapsed.current = REACTION_TIMING.finish;
       running.current = false;
       setStage("complete");
@@ -53,6 +67,23 @@ export function useFission(
     let previous = 0;
     const tick = (now: number) => {
       if (!running.current) return;
+      if (stage === "rewinding") {
+        if (previous)
+          elapsed.current = Math.max(
+            0,
+            elapsed.current -
+              (Math.min((now - previous) / 1000, 0.1) *
+                REACTION_TIMING.finish) /
+                2.2,
+          );
+        previous = now;
+        if (elapsed.current === 0) {
+          reset();
+          return;
+        }
+        frame = requestAnimationFrame(tick);
+        return;
+      }
       if (previous)
         elapsed.current = Math.min(
           REACTION_TIMING.finish,
@@ -66,7 +97,7 @@ export function useFission(
     };
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-  }, [active, playing, visible, reducedMotion, stage]);
+  }, [active, playing, visible, reducedMotion, stage, reset]);
 
   return {
     stage,
@@ -77,7 +108,9 @@ export function useFission(
     handle,
     captureTarget,
     fragmentLabels,
+    emissionLabel,
     start,
+    replay,
     reset,
   };
 }

@@ -1,20 +1,28 @@
+"use client";
+
+import { REACTOR_COLORS } from "@/lib/scene-colors";
 import {
   CONTROL_ROD_POSITIONS,
   FUEL_ROD_POSITIONS,
   type ReactorPart,
 } from "@/lib/reactor";
+import { useLanguage } from "./language-provider";
 
 export function ReactorFallback({
   selected,
 }: {
   selected: ReactorPart | null;
 }) {
+  const { t } = useLanguage();
   return (
     <svg
       className="reactor-fallback"
       viewBox="0 0 640 620"
       role="img"
-      aria-label="Conceptual PWR cutaway: fuel rods and control rods inside a steel vessel, with primary water flowing down around the core and up through it."
+      aria-label={t(
+        "Conceptual PWR cutaway: fuel rods and control rods inside a steel vessel, with primary water flowing down around the core and up through it.",
+        "Kavramsal basınçlı su reaktörü kesiti: çelik kap içindeki yakıt ve kontrol çubukları; birincil devre suyu çekirdeğin çevresinden aşağı, içinden yukarı akar.",
+      )}
     >
       <defs>
         <linearGradient id="vessel-steel">
@@ -152,7 +160,7 @@ export function ReactorFallback({
         </g>
       )}
       {selected === "control" && (
-        <g stroke="#b8cedb" fill="#b8cedb">
+        <g stroke={REACTOR_COLORS.neutron} fill={REACTOR_COLORS.neutron}>
           <path
             d="m357 224-28 13m-35 16 23-5"
             strokeDasharray="3 5"

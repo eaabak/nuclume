@@ -1,28 +1,98 @@
+"use client";
+
 import { CITY_BUILDINGS, type CityPlace, type PowerPart } from "@/lib/power";
+import { useLanguage } from "./language-provider";
 
 export function PowerFallback({
   selected,
   cityPlace,
   cityOverview,
+  roomOpen = false,
 }: {
   selected: PowerPart | null;
   cityPlace: CityPlace | null;
   cityOverview: boolean;
+  roomOpen?: boolean;
 }) {
+  const { t } = useLanguage();
+  if (roomOpen)
+    return (
+      <svg
+        className="power-fallback"
+        viewBox="0 0 800 500"
+        role="img"
+        aria-label={t(
+          "Conceptual control room with a wall of plant schematics and two operator workstations. Illustrative displays, no live data.",
+          "Santral şemalarının yer aldığı ekran duvarı ve iki operatör çalışma istasyonuyla kavramsal kontrol odası. Gösterimler açıklayıcıdır, canlı veri içermez.",
+        )}
+      >
+        <path
+          d="M90 330 380 210 735 355 445 490Z"
+          fill="#243644"
+          stroke="#5e7788"
+        />
+        <path d="M90 330V115L380 15V210Z" fill="#142b3b" stroke="#668193" />
+        <path
+          d="M380 15 735 145V355L380 210Z"
+          fill="#1b3242"
+          stroke="#668193"
+        />
+        <path
+          d="M405 54 705 163V295L405 186Z"
+          fill="#052c49"
+          stroke="#54aed4"
+          strokeWidth="3"
+        />
+        <path
+          d="M440 92V156L480 170V112Z M515 115V183L550 195V130Z M480 145 515 156 M550 168 655 205"
+          fill="none"
+          stroke="#edb76a"
+          strokeWidth="6"
+        />
+        <path
+          d="M100 325 380 210 727 352"
+          fill="none"
+          stroke="#e7b97c"
+          strokeWidth="4"
+        />
+        {[245, 465].map((x) => (
+          <g key={x} transform={`translate(${x} ${x === 245 ? 255 : 337})`}>
+            <path
+              d="M-75 0 0-32 105 10 28 45Z M-75 0V55L28 100V45 M28 100 105 65V10"
+              fill="#3b5261"
+              stroke="#7892a3"
+            />
+            <path d="M-25-5V-56L60-24V26Z" fill="#08446a" stroke="#91d1e8" />
+            <path
+              d="M-14-39 46-16M-14-26 23-12"
+              stroke="#6dc5ec"
+              strokeWidth="3"
+            />
+          </g>
+        ))}
+      </svg>
+    );
   return (
     <svg
       className="power-fallback"
       viewBox={
-        cityPlace === "home"
-          ? "405 265 245 185"
-          : cityPlace === "hospital"
-            ? "425 295 235 175"
-            : cityOverview
-              ? "335 210 525 350"
-              : "0 0 900 670"
+        selected === "heat"
+          ? "65 60 260 220"
+          : selected === "turbine"
+            ? "195 65 340 240"
+            : cityPlace === "home"
+              ? "405 265 245 185"
+              : cityPlace === "hospital"
+                ? "425 295 235 175"
+                : cityOverview
+                  ? "335 210 525 350"
+                  : "0 0 900 670"
       }
       role="img"
-      aria-label="Conceptual energy journey: separate primary and steam circuits, a turbine shaft driving a generator, transmission lines and a lit city."
+      aria-label={t(
+        "Conceptual energy journey: separate primary and steam circuits, a turbine shaft driving a generator, transmission lines and a lit city.",
+        "Kavramsal enerji yolculuğu: birbirinden ayrı birincil su ve buhar devreleri, jeneratörü döndüren türbin mili, iletim hatları ve aydınlanan şehir.",
+      )}
     >
       <defs>
         <linearGradient id="power-steel">

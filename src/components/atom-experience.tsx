@@ -1,16 +1,8 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import {
-  Component,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
-import { ISOTOPE, type ParticleFilter } from "@/lib/nucleus";
-import type { ViewOrientation } from "./nucleus-canvas";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { ParticleFilter } from "@/lib/nucleus";
 import { NucleusFallback } from "./nucleus-fallback";
 import { ReactionControls, ReactionNeutron } from "./reaction-controls";
 import { useFission } from "./use-fission";
@@ -25,73 +17,28 @@ import {
   type JourneyPhase,
   type JourneyTransition,
 } from "./use-journey";
-import { JourneyNavigation } from "./journey-navigation";
+import { useLanguage } from "./language-provider";
+import { useJourneyAudio } from "./journey-audio";
+import { useAtomOpening } from "./use-atom-opening";
+import { AtomOpening } from "./atom-opening";
+import {
+  ExperienceHeader,
+  MotionControl,
+  AtomReticle,
+} from "./experience-chrome";
+import { ScienceDialog } from "./science-dialog";
+import { SceneBoundary } from "./scene-boundary";
+import { useSceneEnvironment } from "./use-scene-environment";
+import { useSceneInput } from "./use-scene-input";
 
 const NucleusCanvas = dynamic(() => import("./nucleus-canvas"), { ssr: false });
 
-class SceneBoundary extends Component<
-  { children: ReactNode; onError: () => void },
-  { failed: boolean }
-> {
-  state = { failed: false };
-  static getDerivedStateFromError() {
-    return { failed: true };
-  }
-  componentDidCatch() {
-    this.props.onError();
-  }
-  render() {
-    return this.state.failed ? null : this.props.children;
-  }
-}
-
-function Arrow({ diagonal = false }: { diagonal?: boolean }) {
-  return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden="true"
-    >
-      <path
-        d={diagonal ? "M6 18 18 6M6 6h12v12" : "M4 12h15m-6-6 6 6-6 6"}
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-const descriptions: Record<ParticleFilter, { title: string; copy: string }> = {
-  all: {
-    title: "A small world. An extraordinary possibility.",
-    copy: "235 particles, bound together by the strong nuclear force. This is where our story begins.",
-  },
-  proton: {
-    title: "92 protons. Unmistakably uranium.",
-    copy: "Each proton carries a positive electric charge. Their number defines the element: 92 means uranium.",
-  },
-  neutron: {
-    title: "143 neutrons. A particular kind of uranium.",
-    copy: "Neutrons have no electric charge. Together with 92 protons, they give this isotope its mass number: 235.",
-  },
-};
-
 export function AtomExperience() {
+  const { t } = useLanguage();
   const [filter, setFilter] = useState<ParticleFilter>("all");
-  const [expanded, setExpanded] = useState(false);
   const [playing, setPlaying] = useState(true);
-  const [reducedMotion, setReducedMotion] = useState(true);
-  const [visible, setVisible] = useState(true);
-  const [webgl, setWebgl] = useState<boolean | null>(null);
-  const [ready, setReady] = useState(false);
-  const [orientation, setOrientation] = useState<ViewOrientation>({
-    x: 0,
-    y: 0,
-  });
+  const { reducedMotion, visible, webgl, ready, onReady, onContextLost } =
+    useSceneEnvironment();
   const [resetKey, setResetKey] = useState(0);
   const [aboutOpen, setAboutOpen] = useState(false);
   const journey = useJourney(
@@ -99,6 +46,9 @@ export function AtomExperience() {
     reducedMotion || webgl === false,
   );
   const reacting = journey.phase > 0;
+  const opening = useAtomOpening(!reacting, reducedMotion || webgl === false);
+  const expanded = !reacting && opening.beat === "inspect";
+  const neutronPreview = !reacting && opening.beat === "neutron";
   const insideReactor = journey.phase >= 2;
   const poweringCity = journey.phase === 3;
   const power = usePower(
@@ -119,62 +69,44 @@ export function AtomExperience() {
     visible && !aboutOpen,
     reducedMotion || webgl === false,
   );
-  const pointer = useRef<ViewOrientation>({ x: 0, y: 0 });
-  const drag = useRef<{
-    x: number;
-    y: number;
-    initial: ViewOrientation;
-  } | null>(null);
-  const dialog = useRef<HTMLDialogElement>(null);
-  const exploreButton = useRef<HTMLButtonElement>(null);
+  const audio = useJourneyAudio({
+    phase: journey.phase,
+    reactionStage: reaction.stage,
+    reactorTime: reactor.elapsed,
+    reactorSelected: reactor.selected,
+    reactorInspection: reactor.inspection,
+    powerTime: power.sceneTime,
+    powerTransfer: power.transfer,
+    powerSelected: power.selected,
+    roomOpen: power.roomOpen,
+    playing,
+    visible: visible && !aboutOpen,
+    reducedMotion,
+  });
+  const input = useSceneInput({
+    phase: journey.phase,
+    disabled: webgl === false || journey.busy,
+    playing,
+    reducedMotion,
+    neutronPreview,
+    scene: journey.scene,
+    city: power,
+    reactor,
+    onResetOpening: () => resetView(),
+    onToggleMotion: () => setPlaying((value) => !value),
+  });
+  const previousPhase = useRef(journey.phase);
   const destinationFocus = useRef<string | null>(null);
-  const handleReady = useCallback(() => setReady(true), []);
-  const handleContextLost = useCallback(() => {
-    setWebgl(false);
-    setReady(false);
-  }, []);
-
-  useEffect(() => {
-    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const updateMotion = () => setReducedMotion(media.matches);
-    const updateVisibility = () =>
-      setVisible(document.visibilityState === "visible");
-    updateMotion();
-    updateVisibility();
-    media.addEventListener("change", updateMotion);
-    document.addEventListener("visibilitychange", updateVisibility);
-    try {
-      const canvas = document.createElement("canvas");
-      const context = canvas.getContext("webgl2", {
-        failIfMajorPerformanceCaveat: true,
-      });
-      setWebgl(Boolean(context));
-      context?.getExtension("WEBGL_lose_context")?.loseContext();
-    } catch {
-      setWebgl(false);
-    }
-    return () => {
-      media.removeEventListener("change", updateMotion);
-      document.removeEventListener("visibilitychange", updateVisibility);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (aboutOpen) dialog.current?.showModal();
-    else dialog.current?.close();
-  }, [aboutOpen]);
-
   const resetView = () => {
-    setOrientation({ x: 0, y: 0 });
-    setExpanded(false);
+    input.reset();
+    opening.reset();
     setFilter("all");
     setResetKey((value) => value + 1);
-    pointer.current = { x: 0, y: 0 };
   };
 
   const available = [
     true,
-    journey.visited[1] || (journey.phase === 0 && expanded),
+    journey.visited[1] || (journey.phase === 0 && (expanded || neutronPreview)),
     journey.visited[2] ||
       (journey.phase === 1 && reaction.stage === "complete"),
     journey.visited[3] || (journey.phase === 2 && reactor.stage === "ready"),
@@ -185,15 +117,21 @@ export function AtomExperience() {
     followCoolant = false,
   ) => {
     if (journey.busy || next === journey.phase || !available[next]) return;
-    pointer.current.x = 0;
-    pointer.current.y = 0;
-    drag.current = null;
-    window.scrollTo({ top: 0, behavior: reducedMotion ? "instant" : "smooth" });
+    input.clearPointer();
+    if (journey.phase !== 0 && next !== 0)
+      window.scrollTo({
+        top: 0,
+        behavior: reducedMotion ? "instant" : "smooth",
+      });
     reaction.dragPoint.current.active = false;
     destinationFocus.current =
       focus ??
       [
-        "explore-button",
+        opening.beat === "neutron"
+          ? "opening-neutron-title"
+          : opening.beat === "inspect"
+            ? "opening-inspect-title"
+            : "explore-button",
         reaction.stage === "ready" ? "incoming-neutron" : "reaction-status",
         "reactor-title",
         "power-title",
@@ -204,7 +142,7 @@ export function AtomExperience() {
       transition = "native";
     } else if (!journey.visited[next]) {
       setPlaying(true);
-      transition = next === 1 ? "gather" : "native";
+      transition = next === 1 && !neutronPreview ? "gather" : "native";
       if (next === 2) reactor.begin(true);
       if (next === 3) power.begin();
     } else if (
@@ -217,6 +155,21 @@ export function AtomExperience() {
     journey.navigate(next, transition);
   };
 
+  useLayoutEffect(() => {
+    if (previousPhase.current === 0 && journey.phase !== 0)
+      window.scrollTo({ top: 0, behavior: "instant" });
+    previousPhase.current = journey.phase;
+  }, [journey.phase]);
+
+  const startOpeningReaction = () => {
+    if (journey.busy) return;
+    setFilter("all");
+    setPlaying(true);
+    destinationFocus.current = "reaction-status";
+    journey.navigate(1, "native");
+    if (reaction.stage === "ready") reaction.start();
+  };
+
   useEffect(() => {
     if (journey.busy || !destinationFocus.current) return;
     document
@@ -227,7 +180,9 @@ export function AtomExperience() {
 
   return (
     <main
-      className={`experience${expanded && !reacting ? " is-exploring" : ""}${ready ? " scene-ready" : ""}${reacting ? " is-reacting" : ""}${insideReactor ? " is-reactor" : ""}${poweringCity ? " is-power" : ""}${journey.busy ? " is-travelling" : ""}`}
+      ref={opening.container}
+      data-opening-beat={!reacting ? opening.beat : undefined}
+      className={`experience${!reacting ? " is-opening" : ""}${ready ? " scene-ready" : ""}${reacting ? " is-reacting" : ""}${insideReactor ? " is-reactor" : ""}${poweringCity ? " is-power" : ""}${journey.busy ? " is-travelling" : ""}`}
       data-phase={journey.phase + 1}
     >
       <a
@@ -239,41 +194,28 @@ export function AtomExperience() {
               ? "#reactor-title"
               : reacting
                 ? "#reaction-title"
-                : "#explore-button"
+                : neutronPreview
+                  ? "#opening-reaction-entry"
+                  : expanded
+                    ? "#opening-inspect-title"
+                    : "#explore-button"
         }
       >
         {poweringCity
-          ? "Skip to city exploration"
+          ? t("Skip to city exploration", "Şehir keşfine geç")
           : insideReactor
-            ? "Skip to reactor exploration"
+            ? t("Skip to reactor exploration", "Reaktör keşfine geç")
             : reacting
-              ? "Skip to reaction"
-              : "Skip to exploration"}
+              ? t("Skip to reaction", "Tepkimeye geç")
+              : t("Skip to exploration", "Keşfe geç")}
       </a>
-      <header className="site-header">
-        <a
-          className="wordmark"
-          href="/"
-          aria-label="Nuclume home"
-          onClick={(event) => {
-            event.preventDefault();
-            navigate(0);
-          }}
-        >
-          <svg className="brand-symbol" viewBox="0 0 32 32" aria-hidden="true">
-            <circle cx="11" cy="10" r="6.5" />
-            <circle cx="22" cy="14" r="6.5" />
-            <circle cx="12" cy="23" r="6.5" />
-            <circle cx="23" cy="25" r="4" />
-          </svg>
-          NUCLUME<span>.</span>
-        </a>
-        <JourneyNavigation
-          journey={journey}
-          available={available}
-          onNavigate={navigate}
-        />
-      </header>
+      <ExperienceHeader
+        journey={journey}
+        available={available}
+        onNavigate={navigate}
+        onHome={() => (reacting ? navigate(0) : resetView())}
+        audio={audio}
+      />
       <section
         className="chapter"
         inert={journey.busy}
@@ -284,7 +226,11 @@ export function AtomExperience() {
               ? "reactor-title"
               : reacting
                 ? "reaction-title"
-                : "chapter-title"
+                : neutronPreview
+                  ? "opening-neutron-title"
+                  : expanded
+                    ? "opening-inspect-title"
+                    : "chapter-title"
         }
       >
         <div className="scene-atmosphere" aria-hidden="true" />
@@ -292,117 +238,71 @@ export function AtomExperience() {
           <div
             id="atom-stage"
             className={`atom-stage${ready ? " is-ready" : ""}${webgl === false ? " is-static" : ""}`}
-            tabIndex={webgl === false || reacting ? -1 : 0}
+            tabIndex={
+              webgl === false ||
+              journey.busy ||
+              (reacting &&
+                !poweringCity &&
+                !(insideReactor && reactor.stage === "ready"))
+                ? -1
+                : 0
+            }
+            data-explorable={
+              webgl !== false &&
+              !journey.busy &&
+              ((insideReactor && !poweringCity && reactor.stage === "ready") ||
+                (poweringCity &&
+                  power.stage === "ready" &&
+                  !power.transfer &&
+                  !power.roomOpen))
+                ? ""
+                : undefined
+            }
             role="group"
             aria-label={
               poweringCity
-                ? "Conceptual journey from reactor heat to a powered city"
+                ? t(
+                    "Conceptual journey from reactor heat to a powered city",
+                    "Reaktör ısısından elektrikle aydınlanan bir şehre kavramsal yolculuk",
+                  )
                 : insideReactor
-                  ? "Conceptual pressurized water reactor"
+                  ? t(
+                      "Conceptual pressurized water reactor",
+                      "Kavramsal basınçlı su reaktörü",
+                    )
                   : reacting
-                    ? "Conceptual uranium-235 fission"
-                    : "Interactive uranium-235 nucleus"
+                    ? t(
+                        "Conceptual uranium-235 fission",
+                        "Kavramsal uranyum-235 fisyonu",
+                      )
+                    : t(
+                        "Interactive uranium-235 nucleus",
+                        "Etkileşimli uranyum-235 çekirdeği",
+                      )
             }
             aria-describedby={
               poweringCity
-                ? "power-detail"
+                ? "power-detail city-navigation-help"
                 : insideReactor
-                  ? "reactor-detail"
+                  ? "reactor-detail reactor-navigation-help"
                   : reacting
                     ? "reaction-instruction"
                     : "interaction-help"
             }
-            onPointerMove={(event) => {
-              const bounds = event.currentTarget.getBoundingClientRect();
-              pointer.current.x =
-                ((event.clientX - bounds.left) / bounds.width) * 2 - 1;
-              pointer.current.y =
-                ((event.clientY - bounds.top) / bounds.height) * 2 - 1;
-              if (drag.current && !reacting) {
-                setOrientation({
-                  x: Math.max(
-                    -0.85,
-                    Math.min(
-                      0.85,
-                      drag.current.initial.x +
-                        (event.clientY - drag.current.y) * 0.005,
-                    ),
-                  ),
-                  y:
-                    drag.current.initial.y +
-                    (event.clientX - drag.current.x) * 0.005,
-                });
-              }
-            }}
-            onPointerDown={(event) => {
-              if (webgl === false || reacting || event.button !== 0) return;
-              drag.current = {
-                x: event.clientX,
-                y: event.clientY,
-                initial: orientation,
-              };
-              event.currentTarget.setPointerCapture(event.pointerId);
-            }}
-            onPointerUp={() => {
-              drag.current = null;
-            }}
-            onPointerCancel={() => {
-              drag.current = null;
-            }}
-            onLostPointerCapture={() => {
-              drag.current = null;
-            }}
-            onPointerLeave={() => {
-              pointer.current.x = 0;
-              pointer.current.y = 0;
-            }}
-            onKeyDown={(event) => {
-              if (reacting) return;
-              if (event.code === "Space") {
-                event.preventDefault();
-                setPlaying((value) => !value);
-                return;
-              }
-              if (
-                ![
-                  "ArrowLeft",
-                  "ArrowRight",
-                  "ArrowUp",
-                  "ArrowDown",
-                  "Home",
-                ].includes(event.key)
-              )
-                return;
-              event.preventDefault();
-              if (event.key === "Home") resetView();
-              else
-                setOrientation((value) => ({
-                  x: Math.max(
-                    -0.85,
-                    Math.min(
-                      0.85,
-                      value.x +
-                        (event.key === "ArrowUp"
-                          ? -0.15
-                          : event.key === "ArrowDown"
-                            ? 0.15
-                            : 0),
-                    ),
-                  ),
-                  y:
-                    value.y +
-                    (event.key === "ArrowLeft"
-                      ? -0.2
-                      : event.key === "ArrowRight"
-                        ? 0.2
-                        : 0),
-                }));
-            }}
+            {...input.handlers}
           >
             {(!ready || webgl === false) &&
               (poweringCity ? (
                 <PowerFallback
-                  selected={power.transfer ? "heat" : power.selected}
+                  roomOpen={power.roomOpen}
+                  selected={
+                    power.transfer
+                      ? power.transfer === "steaming" ||
+                        power.transfer === "turbine"
+                        ? "turbine"
+                        : "heat"
+                      : power.selected
+                  }
                   cityPlace={
                     !power.transfer && power.selected === "city"
                       ? power.cityPlace
@@ -418,41 +318,57 @@ export function AtomExperience() {
                 <ReactorFallback selected={reactor.selected} />
               ) : (
                 <NucleusFallback
-                  filter={filter}
+                  filter={!reacting && !expanded ? "all" : filter}
                   expanded={expanded && !reacting}
                   reaction={reacting ? reaction.stage : undefined}
                 />
               ))}
             {webgl && (
-              <SceneBoundary onError={handleContextLost}>
+              <SceneBoundary onError={onContextLost}>
                 <NucleusCanvas
-                  filter={filter}
+                  filter={!reacting && !expanded ? "all" : filter}
                   expanded={expanded && !reacting}
+                  opening={!reacting ? opening : null}
                   playing={playing}
                   reducedMotion={reducedMotion}
                   visible={visible && !aboutOpen}
-                  orientation={orientation}
+                  orientation={input.orientation}
                   resetKey={resetKey}
-                  pointer={pointer}
+                  pointer={input.pointer}
                   reacting={reacting}
                   reaction={reaction}
                   journey={journey}
                   reactor={insideReactor ? reactor : null}
                   power={poweringCity ? power : null}
-                  onReady={handleReady}
-                  onContextLost={handleContextLost}
+                  onReady={onReady}
+                  onContextLost={onContextLost}
                 />
               </SceneBoundary>
             )}
           </div>
+          {!reacting && (
+            <AtomReticle
+              visible={ready || webgl === false}
+              animated={playing && !reducedMotion && visible && webgl !== false}
+            />
+          )}
           {poweringCity && (
             <PowerHotspots power={power} fallback={webgl === false} />
           )}
           {insideReactor && !poweringCity && (
             <ReactorHotspots reactor={reactor} fallback={webgl === false} />
           )}
-          {reacting && !insideReactor && (
-            <ReactionNeutron reaction={reaction} fallback={webgl === false} />
+          {((reacting && !insideReactor) ||
+            (neutronPreview && reaction.stage === "ready")) && (
+            <ReactionNeutron
+              autoFocus={reacting}
+              reaction={
+                reacting
+                  ? reaction
+                  : { ...reaction, start: startOpeningReaction }
+              }
+              fallback={webgl === false}
+            />
           )}
         </div>
         {poweringCity && (
@@ -492,225 +408,48 @@ export function AtomExperience() {
           <ReactionControls
             reaction={reaction}
             onContinue={() => navigate(2)}
-            onBack={() =>
-              navigate(0, expanded ? "reaction-entry" : "explore-button")
-            }
+            onBack={() => navigate(0)}
             onReplay={() => {
-              reaction.reset();
+              reaction.replay();
               setPlaying(true);
-              requestAnimationFrame(() =>
-                reaction.handle.current?.focus({ preventScroll: true }),
-              );
             }}
           />
         )}
-        <div className="hero-copy" hidden={reacting}>
-          <h1 id="chapter-title">
-            <span>A world</span>
-            <em>within.</em>
-          </h1>
-          <p className="hero-description">
-            Before a city comes to light,
-            <br />a story begins inside an atom.
-          </p>
-          <button
-            id="explore-button"
-            ref={exploreButton}
-            className="explore-button"
-            aria-expanded={expanded}
-            aria-controls="nucleus-controls"
-            onClick={() => {
-              setExpanded(!expanded);
-              if (expanded) setFilter("all");
-            }}
-          >
-            <span className="explore-arrow">
-              <Arrow />
-            </span>
-            <span>
-              {expanded ? "Return to the scene" : "Explore the nucleus"}
-            </span>
-          </button>
-        </div>
-        <aside
-          className="exploration-panel"
-          id="nucleus-controls"
-          aria-label="Inside uranium-235"
-          hidden={!expanded || reacting}
-        >
-          <div className="panel-heading">
-            <span>URANIUM–235</span>
-            <button
-              aria-label="Reset view"
-              onClick={() => {
-                resetView();
-                exploreButton.current?.focus({ preventScroll: true });
-              }}
-            >
-              Reset view <span aria-hidden="true">↺</span>
-            </button>
-          </div>
-          <div className="particle-controls" aria-label="Highlight particles">
-            <button
-              className={`particle-control${filter === "proton" ? " selected" : ""}`}
-              aria-pressed={filter === "proton"}
-              onClick={() => setFilter(filter === "proton" ? "all" : "proton")}
-            >
-              <span className="particle-dot proton-dot" />
-              <span className="particle-count">{ISOTOPE.protons}</span>
-              <span className="particle-name">
-                Protons<span>POSITIVE CHARGE</span>
-              </span>
-              <span className="particle-sign">+</span>
-            </button>
-            <button
-              className={`particle-control${filter === "neutron" ? " selected" : ""}`}
-              aria-pressed={filter === "neutron"}
-              onClick={() =>
-                setFilter(filter === "neutron" ? "all" : "neutron")
-              }
-            >
-              <span className="particle-dot neutron-dot" />
-              <span className="particle-count">{ISOTOPE.neutrons}</span>
-              <span className="particle-name">
-                Neutrons<span>NO CHARGE</span>
-              </span>
-              <span className="particle-sign">0</span>
-            </button>
-          </div>
-          <div
-            className="particle-explanation"
-            aria-live="polite"
-            aria-atomic="true"
-          >
-            <h2>{descriptions[filter].title}</h2>
-            <p>{descriptions[filter].copy}</p>
-            {expanded && (
-              <p className="expanded-note">
-                Spacing increased to reveal the structure.
-              </p>
-            )}
-          </div>
-          <div className="panel-footer">
-            <span>Drag to rotate · Arrow keys to explore</span>
-            <button className="about-button" onClick={() => setAboutOpen(true)}>
-              The science <Arrow diagonal />
-            </button>
-          </div>
-          <button
-            id="reaction-entry"
-            className="reaction-entry"
-            onClick={() => navigate(1)}
-          >
-            The first reaction{" "}
-            <span>
-              02 <Arrow />
-            </span>
-          </button>
-        </aside>
+        {!reacting && (
+          <AtomOpening
+            opening={opening}
+            filter={filter}
+            reactionReady={reaction.stage === "ready"}
+            onFilter={setFilter}
+            onReset={resetView}
+            onScience={() => setAboutOpen(true)}
+            onReaction={startOpeningReaction}
+          />
+        )}
         <p id="interaction-help" className="sr-only" hidden={reacting}>
-          A conceptual uranium-235 nucleus, containing 92 protons and 143
-          neutrons. Drag or use arrow keys to rotate. Space pauses motion. Home
-          resets the view. Colors, positions, motion, and atmospheric motes are
-          illustrative, not a physical simulation.
+          {t(
+            "A conceptual uranium-235 nucleus, containing 92 protons and 143 neutrons. Scroll or use the exploration buttons to move closer. Drag with a mouse or use arrow keys to rotate. Space pauses motion. Home resets the view. Colors, positions, motion, and atmospheric motes are illustrative, not a physical simulation.",
+            "92 proton ve 143 nötron içeren kavramsal uranyum-235 çekirdeği. Yaklaşmak için kaydırın veya keşif düğmelerini kullanın. Döndürmek için fareyle sürükleyin veya yön tuşlarını kullanın. Boşluk tuşu hareketi duraklatır. Home tuşu görünümü sıfırlar. Renkler, konumlar, hareket ve atmosfer parçacıkları temsilidir; fiziksel simülasyon değildir.",
+          )}
         </p>
         {webgl === false && (
           <p className="fallback-note" role="status">
-            STATIC VIEW · 3D is unavailable. The illustrated model remains
-            interactive.
+            {t(
+              "STATIC VIEW · 3D is unavailable. The illustrated model remains interactive.",
+              "STATİK GÖRÜNÜM · 3B kullanılamıyor. Çizim üzerinden etkileşime devam edebilirsiniz.",
+            )}
           </p>
         )}
-        <button
-          className="motion-control"
-          data-guided={poweringCity && power.transfer ? "" : undefined}
-          aria-label={
-            poweringCity
-              ? playing
-                ? "Pause city motion"
-                : "Resume city motion"
-              : insideReactor
-                ? playing
-                  ? "Pause reactor motion"
-                  : "Resume reactor motion"
-                : reacting
-                  ? playing
-                    ? "Pause reaction"
-                    : "Resume reaction"
-                  : playing
-                    ? "Pause rotation"
-                    : "Resume rotation"
-          }
-          aria-pressed={!playing}
-          disabled={reducedMotion || webgl === false}
-          onClick={() => setPlaying(!playing)}
-        >
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            aria-hidden="true"
-          >
-            <path
-              d={
-                playing && !reducedMotion
-                  ? "M9 5v14m6-14v14"
-                  : "m9 5 10 7-10 7V5Z"
-              }
-              stroke="currentColor"
-              strokeWidth="1.4"
-            />
-          </svg>
-          <span>
-            {playing && !reducedMotion ? "Pause motion" : "Motion paused"}
-          </span>
-        </button>
+        <MotionControl
+          phase={journey.phase}
+          playing={playing}
+          reducedMotion={reducedMotion}
+          unavailable={webgl === false}
+          guided={Boolean(poweringCity && power.transfer)}
+          onToggle={() => setPlaying(!playing)}
+        />
       </section>
-      <dialog
-        ref={dialog}
-        className="about-dialog"
-        aria-labelledby="about-title"
-        onClose={() => setAboutOpen(false)}
-        onClick={(event) => {
-          if (event.target === event.currentTarget) setAboutOpen(false);
-        }}
-      >
-        <button
-          className="dialog-close"
-          aria-label="Close about the experience"
-          onClick={() => setAboutOpen(false)}
-        >
-          ×
-        </button>
-        <p className="section-kicker">NUCLUME / CHAPTER 01</p>
-        <h2 id="about-title">
-          A world within.
-          <br />
-          <em>A world ahead.</em>
-        </h2>
-        <p>
-          From a single atom to an entire city. NUCLUME is an exploration of the
-          science behind nuclear energy. This first chapter begins with the
-          nucleus of uranium-235.
-        </p>
-        <p>
-          Its 92 protons define it as uranium. Add 143 neutrons and you have 235
-          nucleons, giving this isotope its name.
-        </p>
-        <p className="science-note">
-          This is a conceptual model, not a physical simulation. Colors identify
-          particle types; positions, sizes, spacing, and motion are
-          illustrative. The ambient motes are atmosphere, not emitted particles.
-          Electrons are outside this view.
-        </p>
-        <a
-          href="https://www.nrc.gov/education-regulatory-research/the-student-corner/science-101/what-is-a-chain-reaction"
-          target="_blank"
-          rel="noreferrer"
-        >
-          The science, via the U.S. NRC <Arrow diagonal />
-        </a>
-      </dialog>
+      <ScienceDialog open={aboutOpen} onClose={() => setAboutOpen(false)} />
     </main>
   );
 }

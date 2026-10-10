@@ -35,16 +35,17 @@ function createNucleus(): Nucleon[] {
       for (let z = -6; z <= 6; z += 1) {
         if ((x + y + z) % 2 !== 0) continue;
         const position: [number, number, number] = [
-          x * 0.49 + (random() - 0.5) * 0.09,
-          y * 0.49 + (random() - 0.5) * 0.09,
-          z * 0.49 + (random() - 0.5) * 0.09,
+          x * 0.48 + (random() - 0.5) * 0.12,
+          y * 0.48 + (random() - 0.5) * 0.12,
+          z * 0.48 + (random() - 0.5) * 0.12,
         ];
         const radius = Math.hypot(...position);
         const envelope =
           1 +
-          0.13 *
+          0.19 *
             Math.sin(position[1] * 1.6 + position[2]) *
-            Math.cos(position[0] * 1.2);
+            Math.cos(position[0] * 1.2) +
+          0.07 * Math.sin(position[0] * 2.1 - position[2]);
         candidates.push({ position, distance: radius / envelope });
       }
     }
@@ -59,13 +60,13 @@ function createNucleus(): Nucleon[] {
 
   return positions.map(({ position }, index) => ({
     position: [
-      position[0] * 1.07 + Math.sin(position[1] * 1.5) * 0.13,
-      position[1] * 1.12,
-      position[2] * 0.94 + Math.sin(position[0] * 1.3) * 0.1,
+      position[0] * 1.03 + Math.sin(position[1] * 1.5) * 0.16,
+      position[1] * 1.15,
+      position[2] * 0.98 + Math.sin(position[0] * 1.3) * 0.12,
     ],
-    radius: 0.31 + random() * 0.055,
+    radius: 0.32 + random() * 0.055,
     kind: index < ISOTOPE.protons ? "proton" : "neutron",
-    shade: 0.64 + random() * 0.36,
+    shade: 0.72 + random() * 0.32,
   }));
 }
 
