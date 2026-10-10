@@ -42,7 +42,7 @@ export function CitySignature({ time }: { time: RefObject<number> }) {
     context.fillText("/", 264, 218);
     context.fillText("/", 264, 338);
     context.fillStyle = "#e7d4ae";
-    context.fillText("eaabak", 316, 218);
+    context.fillText("nuclume", 316, 218);
     context.fillText("@eaa_ce", 316, 338);
     context.strokeStyle = "#d1b889";
     context.lineWidth = 4;
@@ -168,7 +168,9 @@ export function CitySignature({ time }: { time: RefObject<number> }) {
             return;
           event.stopPropagation();
           window.open(
-            y > 0.36 ? "https://github.com/eaabak" : "https://x.com/eaa_ce",
+            y > 0.36
+              ? "https://github.com/eaabak/nuclume"
+              : "https://x.com/eaa_ce",
             "_blank",
             "noopener,noreferrer",
           );

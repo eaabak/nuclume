@@ -441,16 +441,16 @@ export function PowerControls({
             </p>
             <nav
               className="city-signature-links"
-              aria-label={t("Creator profiles", "Yapımcının profilleri")}
+              aria-label={t("Project and creator", "Proje ve yapımcı")}
             >
               <span>{t("BY EAABAK", "YAPIM: EAABAK")}</span>
               <a
-                href="https://github.com/eaabak"
+                href="https://github.com/eaabak/nuclume"
                 target="_blank"
                 rel="noopener noreferrer"
                 aria-label={t(
-                  "eaabak on GitHub (opens in a new tab)",
-                  "GitHub'da eaabak (yeni sekmede açılır)",
+                  "NUCLUME repository on GitHub (opens in a new tab)",
+                  "GitHub'da NUCLUME deposu (yeni sekmede açılır)",
                 )}
               >
                 GitHub ↗
